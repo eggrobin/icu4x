@@ -5,14 +5,17 @@
 use crate::fields::FieldLength;
 use core::{cmp::Ordering, convert::TryFrom};
 use displaydoc::Display;
-use icu_provider::{yoke, zerofrom};
+use icu_provider::prelude::*;
+use zerovec::ule::{AsULE, ZeroVecError, ULE};
 
+/// An error relating to the field symbol for a date pattern field.
 #[derive(Display, Debug, PartialEq, Copy, Clone)]
 #[non_exhaustive]
 pub enum SymbolError {
     /// Invalid field symbol index.
     #[displaydoc("Invalid field symbol index: {0}")]
     InvalidIndex(u8),
+    /// Unknown field symbol.
     #[displaydoc("Unknown field symbol: {0}")]
     Unknown(char),
     /// Invalid character for a field symbol.
@@ -23,19 +26,37 @@ pub enum SymbolError {
 #[cfg(feature = "std")]
 impl std::error::Error for SymbolError {}
 
+/// A field symbol for a date formatting pattern. Field symbols are a more granular distinction
+/// for a pattern field within the category of a field type. Examples of field types are:
+/// `Year`, `Month`, `Hour`.  Within the [`Hour`] field type, examples of field symbols are: [`Hour::H12`],
+/// [`Hour::H24`]. Each field symbol is represented within the date formatting pattern string
+/// by a distinct character from the set of `A..Z` and `a..z`.
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "datagen", derive(serde::Serialize, databake::Bake), databake(path = icu_datetime::fields))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[allow(clippy::exhaustive_enums)] // part of data struct
 pub enum FieldSymbol {
+    /// Era name.
     Era,
+    /// Year number or year name.
     Year(Year),
+    /// Month number or month name.
     Month(Month),
+    /// Week number or week name.
     Week(Week),
+    /// Day number relative to a time period longer than a week (ex: month, year).
     Day(Day),
+    /// Day number or day name relative to a week.
     Weekday(Weekday),
+    /// Name of a period within a day.
     DayPeriod(DayPeriod),
+    /// Hour number within a day, possibly with day period.
     Hour(Hour),
+    /// Minute number within an hour.
     Minute,
+    /// Seconds number within a minute, including fractional seconds, or milliseconds within a day.
     Second(Second),
+    /// Time zone as a name, a zone ID, or a ISO 8601 numerical offset.
     TimeZone(TimeZone),
 }
 
@@ -73,26 +94,6 @@ impl FieldSymbol {
     /// # Constraints
     ///
     /// This model limits the available number of possible types and symbols to 16 each.
-
-    #[inline]
-    pub(crate) fn idx_in_range(kv: &u8) -> bool {
-        let symbol = kv & 0b0000_1111;
-        let field_type = kv >> 4;
-        match field_type {
-            0 => true, // eras
-            1 => Year::idx_in_range(&symbol),
-            2 => Month::idx_in_range(&symbol),
-            3 => Week::idx_in_range(&symbol),
-            4 => Day::idx_in_range(&symbol),
-            5 => Weekday::idx_in_range(&symbol),
-            6 => DayPeriod::idx_in_range(&symbol),
-            7 => Hour::idx_in_range(&symbol),
-            8 => symbol == 0,
-            9 => Second::idx_in_range(&symbol),
-            10 => TimeZone::idx_in_range(&symbol),
-            _ => false,
-        }
-    }
 
     #[inline]
     pub(crate) fn idx(&self) -> u8 {
@@ -137,6 +138,7 @@ impl FieldSymbol {
     }
 
     /// Returns the index associated with this FieldSymbol.
+    #[cfg(any(feature = "datagen", feature = "experimental"))] // only referenced in experimental code
     fn discriminant_idx(&self) -> u8 {
         match self {
             FieldSymbol::Era => 0,
@@ -155,20 +157,65 @@ impl FieldSymbol {
 
     /// Compares this enum with other solely based on the enum variant,
     /// ignoring the enum's data.
+    #[cfg(any(feature = "datagen", feature = "experimental"))] // only referenced in experimental code
     pub(crate) fn discriminant_cmp(&self, other: &Self) -> Ordering {
         self.discriminant_idx().cmp(&other.discriminant_idx())
     }
 }
 
+/// [`ULE`](zerovec::ule::ULE) type for [`FieldSymbol`]
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct FieldSymbolULE(u8);
+
+impl AsULE for FieldSymbol {
+    type ULE = FieldSymbolULE;
+    fn to_unaligned(self) -> Self::ULE {
+        FieldSymbolULE(self.idx())
+    }
+    fn from_unaligned(unaligned: Self::ULE) -> Self {
+        #[allow(clippy::unwrap_used)] // OK because the ULE is pre-validated
+        Self::from_idx(unaligned.0).unwrap()
+    }
+}
+
+impl FieldSymbolULE {
+    #[inline]
+    pub(crate) fn validate_byte(byte: u8) -> Result<(), ZeroVecError> {
+        FieldSymbol::from_idx(byte)
+            .map(|_| ())
+            .map_err(|_| ZeroVecError::parse::<FieldSymbol>())
+    }
+}
+
+// Safety checklist for ULE:
+//
+// 1. Must not include any uninitialized or padding bytes (true since transparent over a ULE).
+// 2. Must have an alignment of 1 byte (true since transparent over a ULE).
+// 3. ULE::validate_byte_slice() checks that the given byte slice represents a valid slice.
+// 4. ULE::validate_byte_slice() checks that the given byte slice has a valid length
+//    (true since transparent over a type of size 1).
+// 5. All other methods must be left with their default impl.
+// 6. Byte equality is semantic equality.
+unsafe impl ULE for FieldSymbolULE {
+    fn validate_byte_slice(bytes: &[u8]) -> Result<(), ZeroVecError> {
+        for byte in bytes {
+            Self::validate_byte(*byte)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
-pub enum TextOrNumeric {
+#[allow(clippy::exhaustive_enums)] // used in data struct
+pub(crate) enum TextOrNumeric {
     Text,
     Numeric,
 }
 
 /// [`FieldSymbols`](FieldSymbol) can be either text or numeric. This categorization is important
 /// when matching skeletons with a components [`Bag`](crate::options::components::Bag).
-pub trait LengthType {
+pub(crate) trait LengthType {
     fn get_length_type(&self, length: FieldLength) -> TextOrNumeric;
 }
 
@@ -279,14 +326,140 @@ impl Ord for FieldSymbol {
     }
 }
 
-field_type!(Year; {
-    'y' => Calendar = 0,
-    'Y' => WeekOf = 1,
-}; Numeric; YearULE);
+macro_rules! field_type {
+    ($(#[$enum_attr:meta])* $i:ident; { $( $(#[$variant_attr:meta])* $key:literal => $val:ident = $idx:expr,)* }; $length_type:ident; $ule_name:ident) => (
+        field_type!($(#[$enum_attr])* $i; {$( $(#[$variant_attr])* $key => $val = $idx,)*}; $ule_name);
 
-field_type!(Month; {
-    'M' => Format = 0,
-    'L' => StandAlone = 1,
+        impl LengthType for $i {
+            fn get_length_type(&self, _length: FieldLength) -> TextOrNumeric {
+                TextOrNumeric::$length_type
+            }
+        }
+    );
+    ($(#[$enum_attr:meta])* $i:ident; { $( $(#[$variant_attr:meta])* $key:literal => $val:ident = $idx:expr,)* }; $ule_name:ident) => (
+        #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Clone, Copy, yoke::Yokeable, zerofrom::ZeroFrom)]
+        // FIXME: This should be replaced with a custom derive.
+        // See: https://github.com/unicode-org/icu4x/issues/1044
+        #[cfg_attr(
+            feature = "datagen",
+            derive(serde::Serialize, databake::Bake),
+            databake(path = icu_datetime::fields),
+        )]
+        #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+        #[allow(clippy::enum_variant_names)]
+        #[repr(u8)]
+        #[zerovec::make_ule($ule_name)]
+        #[zerovec::derive(Debug)]
+        #[allow(clippy::exhaustive_enums)] // used in data struct
+        $(#[$enum_attr])*
+        pub enum $i {
+            $(
+                $(#[$variant_attr])*
+                #[doc = core::concat!("\n\nThis field symbol is represented by the character `", $key, "` in a date formatting pattern string.")]
+                #[doc = "\n\nFor more details, see documentation on [date field symbols](https://unicode.org/reports/tr35/tr35-dates.html#table-date-field-symbol-table)."]
+                $val = $idx,
+            )*
+        }
+
+        impl $i {
+            /// Retrieves an index of the field variant.
+            ///
+            /// # Examples
+            ///
+            /// ```ignore
+            /// use icu::datetime::fields::Month;
+            ///
+            /// assert_eq!(Month::StandAlone::idx(), 1);
+            /// ```
+            ///
+            /// # Stability
+            ///
+            /// This is mostly useful for serialization,
+            /// and does not guarantee index stability between ICU4X
+            /// versions.
+            #[inline]
+            pub(crate) fn idx(self) -> u8 {
+                self as u8
+            }
+
+            /// Retrieves a field variant from an index.
+            ///
+            /// # Examples
+            ///
+            /// ```ignore
+            /// use icu::datetime::fields::Month;
+            ///
+            /// assert_eq!(Month::from_idx(0), Month::Format);
+            /// ```
+            ///
+            /// # Stability
+            ///
+            /// This is mostly useful for serialization,
+            /// and does not guarantee index stability between ICU4X
+            /// versions.
+            #[inline]
+            pub(crate) fn from_idx(idx: u8) -> Result<Self, SymbolError> {
+                Self::new_from_u8(idx)
+                    .ok_or(SymbolError::InvalidIndex(idx))
+            }
+        }
+
+        impl TryFrom<char> for $i {
+            type Error = SymbolError;
+
+            fn try_from(ch: char) -> Result<Self, Self::Error> {
+                match ch {
+                    $(
+                        $key => Ok(Self::$val),
+                    )*
+                    _ => Err(SymbolError::Unknown(ch)),
+                }
+            }
+        }
+
+        impl From<$i> for FieldSymbol {
+            fn from(input: $i) -> Self {
+                Self::$i(input)
+            }
+        }
+
+        impl From<$i> for char {
+            fn from(input: $i) -> char {
+                match input {
+                    $(
+                        $i::$val => $key,
+                    )*
+                }
+            }
+        }
+    );
+}
+
+field_type! (
+    /// An enum for the possible symbols of a year field in a date pattern.
+    Year; {
+        /// Field symbol for calendar year (numeric).
+        ///
+        /// In most cases the length of this field specifies the minimum number of digits to display, zero-padded as necessary. For most use cases, [`Year::Calendar`] or [`Year::WeekOf`] should be adequate.
+        'y' => Calendar = 0,
+        /// Field symbol for year in "week of year".
+        ///
+        /// This works for “week of year” based calendars in which the year transition occurs on a week boundary; may differ from calendar year [`Year::Calendar`] near a year transition. This numeric year designation is used in conjunction with [`Week::WeekOfYear`], but can be used in non-Gregorian based calendar systems where week date processing is desired. The field length is interpreted in the same way as for [`Year::Calendar`].
+        'Y' => WeekOf = 1,
+    };
+    Numeric;
+    YearULE
+);
+
+field_type!(
+    /// An enum for the possible symbols of a month field in a date pattern.
+    Month; {
+        /// Field symbol for month number or name in a pattern that contains multiple fields.
+        'M' => Format = 0,
+        /// Field symbol for a "stand-alone" month number or name.
+        /// 
+        /// The stand-alone month name is used when the month is displayed by itself. This may differ from the standard form based on the language and context.
+        'L' => StandAlone = 1,
 }; MonthULE);
 
 impl LengthType for Month {
@@ -306,36 +479,90 @@ impl LengthType for Month {
     }
 }
 
-field_type!(Day; {
-    'd' => DayOfMonth = 0,
-    'D' => DayOfYear = 1,
-    'F' => DayOfWeekInMonth = 2,
-    'g' => ModifiedJulianDay = 3,
-}; Numeric; DayULE);
+field_type!(
+    /// An enum for the possible symbols of a day field in a date pattern.
+    Day; {
+        /// Field symbol for day of month (numeric).
+        'd' => DayOfMonth = 0,
+        /// Field symbol for day of year (numeric).
+        'D' => DayOfYear = 1,
+        /// Field symbol for the day of week occurrence relative to the month (numeric).
+        ///
+        /// For the example `"2nd Wed in July"`, this field would provide `"2"`.  Should likely be paired with the [`Weekday`] field.
+        'F' => DayOfWeekInMonth = 2,
+        /// Field symbol for the modified Julian day (numeric).
+        ///
+        /// The value of this field differs from the conventional Julian day number in a couple of ways, which are based on measuring relative to the local time zone.
+        'g' => ModifiedJulianDay = 3,
+    };
+    Numeric;
+    DayULE
+);
 
-field_type!(Hour; {
-    'K' => H11 = 0,
-    'h' => H12 = 1,
-    'H' => H23 = 2,
-    'k' => H24 = 3,
-}; Numeric; HourULE);
+field_type!(
+    /// An enum for the possible symbols of an hour field in a date pattern.
+    Hour; {
+        /// Field symbol for numeric hour [0-11].
+        'K' => H11 = 0,
+        /// Field symbol for numeric hour [1-12].
+        'h' => H12 = 1,
+        /// Field symbol for numeric hour [0-23].
+        'H' => H23 = 2,
+        /// Field symbol for numeric hour [1-24].
+        'k' => H24 = 3,
+    };
+    Numeric;
+    HourULE
+);
 
-field_type!(Second; {
-    's' => Second = 0,
-    'S' => FractionalSecond = 1,
-    'A' => Millisecond = 2,
-}; Numeric; SecondULE);
+field_type!(
+    /// An enum for the possible symbols of a second field in a date pattern.
+    Second; {
+        /// Field symbol for second (numeric).
+        's' => Second = 0,
+        /// Field symbol for fractional second (numeric).
+        ///
+        /// Produces the number of digits specified by the field length.
+        'S' => FractionalSecond = 1,
+        /// Field symbol for milliseconds in day (numeric).
+        ///
+        /// This field behaves exactly like a composite of all time-related fields, not including the zone fields.
+        'A' => Millisecond = 2,
+    };
+    Numeric;
+    SecondULE
+);
 
-field_type!(Week; {
-    'w' => WeekOfYear = 0,
-    'W' => WeekOfMonth = 1,
-}; Numeric; WeekULE);
+field_type!(
+    /// An enum for the possible symbols of a week field in a date pattern.
+    Week; {
+        /// Field symbol for week of year (numeric).
+        ///
+        /// When used in a pattern with year, use [`Year::WeekOf`] for the year field instead of [`Year::Calendar`].
+        'w' => WeekOfYear = 0,
+        /// Field symbol for week of month (numeric).
+        'W' => WeekOfMonth = 1,
+    };
+    Numeric;
+    WeekULE
+);
 
-field_type!(Weekday; {
-    'E' => Format = 0,
-    'e' => Local = 1,
-    'c' => StandAlone = 2,
-}; WeekdayULE);
+field_type!(
+    /// An enum for the possible symbols of a weekday field in a date pattern.
+    Weekday;  {
+        /// Field symbol for day of week (text format only).
+        'E' => Format = 0,
+        /// Field symbol for day of week; numeric formats produce a locale-dependent ordinal weekday number.
+        ///
+        /// For example, in de-DE, Monday is the 1st day of the week.
+        'e' => Local = 1,
+        /// Field symbol for stand-alone local day of week number/name.
+        ///
+        /// The stand-alone weekday name is used when the weekday is displayed by itself. This may differ from the standard form based on the language and context.
+        'c' => StandAlone = 2,
+    };
+    WeekdayULE
+);
 
 impl LengthType for Weekday {
     fn get_length_type(&self, length: FieldLength) -> TextOrNumeric {
@@ -349,20 +576,46 @@ impl LengthType for Weekday {
     }
 }
 
-field_type!(DayPeriod; {
-    'a' => AmPm = 0,
-    'b' => NoonMidnight = 1,
-}; Text; DayPeriodULE);
+field_type!(
+    /// An enum for the possible symbols of a day period field in a date pattern.
+    DayPeriod; {
+        /// Field symbol for the AM, PM day period.  (Does not include noon, midnight.)
+        'a' => AmPm = 0,
+        /// Field symbol for the am, pm, noon, midnight day period.
+        'b' => NoonMidnight = 1,
+    };
+    Text;
+    DayPeriodULE
+);
 
-field_type!(TimeZone; {
-    'z' => LowerZ = 0,
-    'Z' => UpperZ = 1,
-    'O' => UpperO = 2,
-    'v' => LowerV = 3,
-    'V' => UpperV = 4,
-    'x' => LowerX = 5,
-    'X' => UpperX = 6,
-}; TimeZoneULE);
+field_type!(
+    /// An enum for the possible symbols of a time zone field in a date pattern.
+    TimeZone; {
+        /// Field symbol for the specific non-location format of a time zone.
+        ///
+        /// For example: "Pacific Standard Time"
+        'z' => LowerZ = 0,
+        /// Field symbol for any of: the ISO8601 basic format with hours, minutes and optional seconds fields, the
+        /// long localized GMT format, or the ISO8601 extended format with hours, minutes and optional seconds fields.
+        'Z' => UpperZ = 1,
+        /// Field symbol for the localized GMT format of a time zone.
+        ///
+        /// For example: "GMT-07:00"
+        'O' => UpperO = 2,
+        /// Field symbol for the generic non-location format of a time zone.
+        ///
+        /// For example: "Pacific Time"
+        'v' => LowerV = 3,
+        /// Field symbol for any of: the time zone id, time zone exemplar city, or generic location format.
+        'V' => UpperV = 4,
+        /// Field symbol for either the ISO8601 basic format or ISO8601 extended format, with an optional ISO8601 UTC indicator `Z`.
+        'x' => LowerX = 5,
+        /// Field symbol for either the ISO8601 basic format or ISO8601 extended format.  This does not allow an
+        /// optional ISO8601 UTC indicator `Z`, whereas [`TimeZone::LowerX`] allows the optional `Z`.
+        'X' => UpperX = 6,
+    };
+    TimeZoneULE
+);
 
 impl LengthType for TimeZone {
     fn get_length_type(&self, length: FieldLength) -> TextOrNumeric {

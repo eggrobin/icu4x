@@ -25,12 +25,10 @@ use super::Value;
 ///
 /// ```
 /// use icu::locid::extensions::transform::{Fields, Key, Value};
+/// use icu::locid::extensions_transform_key as key;
 ///
-/// let key: Key = "h0".parse()
-///     .expect("Failed to parse a Key.");
-/// let value: Value = "hybrid".parse()
-///     .expect("Failed to parse a Value.");
-/// let fields: Fields = vec![(key, value)].into_iter().collect();
+/// let value = "hybrid".parse::<Value>().expect("Failed to parse a Value.");
+/// let fields = vec![(key!("h0"), value)].into_iter().collect::<Fields>();
 ///
 /// assert_eq!(&fields.to_string(), "h0-hybrid");
 /// ```
@@ -57,11 +55,12 @@ impl Fields {
     /// # Examples
     ///
     /// ```
-    /// use icu::locid::Locale;
     /// use icu::locid::extensions::transform::Fields;
+    /// use icu::locid::locale;
+    /// use icu::locid::Locale;
     ///
-    /// let loc1 = Locale::from_bytes(b"und-t-h0-hybrid").unwrap();
-    /// let loc2 = Locale::from_bytes(b"und-u-ca-buddhist").unwrap();
+    /// let loc1 = Locale::try_from_bytes(b"und-t-h0-hybrid").unwrap();
+    /// let loc2 = locale!("und-u-ca-buddhist");
     ///
     /// assert!(!loc1.extensions.transform.fields.is_empty());
     /// assert!(loc2.extensions.transform.fields.is_empty());
@@ -72,25 +71,25 @@ impl Fields {
 
     /// Empties the [`Fields`] list.
     ///
+    /// Returns the old list.
+    ///
     /// # Examples
     ///
     /// ```
-    /// use icu::locid::extensions::transform::{Fields, Key, Value};
+    /// use icu::locid::extensions::transform::{Fields, Value};
+    /// use icu::locid::extensions_transform_key as key;
     ///
-    /// let key: Key = "h0".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// let value: Value = "hybrid".parse()
-    ///     .expect("Failed to parse a Value.");
-    /// let mut fields: Fields = vec![(key, value)].into_iter().collect();
+    /// let value = "hybrid".parse::<Value>().expect("Failed to parse a Value.");
+    /// let mut fields = vec![(key!("h0"), value)].into_iter().collect::<Fields>();
     ///
     /// assert_eq!(&fields.to_string(), "h0-hybrid");
     ///
     /// fields.clear();
     ///
-    /// assert_eq!(&fields.to_string(), "");
+    /// assert_eq!(fields, Fields::new());
     /// ```
-    pub fn clear(&mut self) {
-        self.0.clear();
+    pub fn clear(&mut self) -> Self {
+        core::mem::take(self)
     }
 
     /// Returns `true` if the list contains a [`Value`] for the specified [`Key`].
@@ -101,14 +100,11 @@ impl Fields {
     /// ```
     /// use icu::locid::extensions::transform::{Fields, Key, Value};
     ///
-    /// let key: Key = "h0".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// let value: Value = "hybrid".parse()
-    ///     .expect("Failed to parse a Value.");
+    /// let key: Key = "h0".parse().expect("Failed to parse a Key.");
+    /// let value: Value = "hybrid".parse().expect("Failed to parse a Value.");
     /// let mut fields: Fields = vec![(key, value)].into_iter().collect();
     ///
-    /// let key: Key = "h0".parse()
-    ///     .expect("Failed to parse a Key.");
+    /// let key: Key = "h0".parse().expect("Failed to parse a Key.");
     /// assert!(&fields.contains_key(&key));
     /// ```
     pub fn contains_key<Q>(&self, key: &Q) -> bool
@@ -126,19 +122,14 @@ impl Fields {
     ///
     /// ```
     /// use icu::locid::extensions::transform::{Fields, Key, Value};
+    /// use icu::locid::extensions_transform_key as key;
     ///
-    /// let key: Key = "h0".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// let value: Value = "hybrid".parse()
-    ///     .expect("Failed to parse a Value.");
-    /// let mut fields: Fields = vec![(key, value)].into_iter().collect();
+    /// let value = "hybrid".parse::<Value>().unwrap();
+    /// let fields = vec![(key!("h0"), value.clone())]
+    ///     .into_iter()
+    ///     .collect::<Fields>();
     ///
-    /// let key: Key = "h0".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// assert_eq!(
-    ///     fields.get(&key).map(|v| v.to_string()),
-    ///     Some("hybrid".to_string())
-    /// );
+    /// assert_eq!(fields.get(&key!("h0")), Some(&value));
     /// ```
     pub fn get<Q>(&self, key: &Q) -> Option<&Value>
     where
@@ -153,26 +144,21 @@ impl Fields {
     /// # Examples
     ///
     /// ```
-    /// use std::str::FromStr;
-    /// use std::string::ToString;
-    /// use icu::locid::transform_ext_key;
-    /// use icu::locid::Locale;
     /// use icu::locid::extensions::transform::Key;
     /// use icu::locid::extensions::transform::Value;
+    /// use icu::locid::extensions_transform_key as key;
+    /// use icu::locid::Locale;
     ///
-    /// const D0_KEY: Key = transform_ext_key!("d0");
-    /// let lower = Value::from_str("lower").expect("valid extension subtag");
-    /// let casefold = Value::from_str("casefold").expect("valid extension subtag");
+    /// let lower = "lower".parse::<Value>().expect("valid extension subtag");
+    /// let casefold = "casefold".parse::<Value>().expect("valid extension subtag");
     ///
-    /// let mut loc: Locale = "en-t-hi-d0-casefold".parse()
+    /// let mut loc: Locale = "en-t-hi-d0-casefold"
+    ///     .parse()
     ///     .expect("valid BCP-47 identifier");
-    /// let old_value = loc.extensions.transform.fields.set(
-    ///     D0_KEY,
-    ///     lower
-    /// );
+    /// let old_value = loc.extensions.transform.fields.set(key!("d0"), lower);
     ///
     /// assert_eq!(old_value, Some(casefold));
-    /// assert_eq!(loc, "en-t-hi-d0-lower");
+    /// assert_eq!(loc, "en-t-hi-d0-lower".parse().unwrap());
     /// ```
     pub fn set(&mut self, key: Key, value: Value) -> Option<Value> {
         self.0.insert(key, value)
@@ -183,16 +169,22 @@ impl Fields {
     /// # Examples
     ///
     /// ```
+    /// use icu::locid::extensions_transform_key as key;
     /// use icu::locid::Locale;
-    /// use std::str::FromStr;
     ///
     /// let mut loc: Locale = "und-t-h0-hybrid-d0-hex-m0-xml".parse().unwrap();
     ///
-    /// loc.extensions.transform.fields.retain_by_key(|k| k == "h0");
-    /// assert_eq!(loc, "und-t-h0-hybrid");
+    /// loc.extensions
+    ///     .transform
+    ///     .fields
+    ///     .retain_by_key(|&k| k == key!("h0"));
+    /// assert_eq!(loc, "und-t-h0-hybrid".parse().unwrap());
     ///
-    /// loc.extensions.transform.fields.retain_by_key(|k| k == "d0");
-    /// assert_eq!(loc, "und");
+    /// loc.extensions
+    ///     .transform
+    ///     .fields
+    ///     .retain_by_key(|&k| k == key!("d0"));
+    /// assert_eq!(loc, Locale::UND);
     /// ```
     pub fn retain_by_key<F>(&mut self, mut predicate: F)
     where

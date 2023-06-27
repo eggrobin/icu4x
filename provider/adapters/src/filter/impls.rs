@@ -8,9 +8,12 @@ use icu_provider::prelude::*;
 
 use icu_locid::LanguageIdentifier;
 
+type RequestFilterDataProviderOutput<'a, D> =
+    RequestFilterDataProvider<D, Box<dyn Fn(DataRequest) -> bool + Sync + 'a>>;
+
 impl<D, F> RequestFilterDataProvider<D, F>
 where
-    F: Fn(&DataRequest) -> bool + Sync,
+    F: Fn(DataRequest) -> bool + Sync,
 {
     /// Filter out data requests with certain langids according to the predicate function. The
     /// predicate should return `true` to allow a langid and `false` to reject a langid.
@@ -21,41 +24,46 @@ where
     /// # Examples
     ///
     /// ```
-    /// use icu_provider::prelude::*;
-    /// use icu_provider::hello_world::*;
-    /// use icu_provider::datagen::*;
-    /// use icu_provider_adapters::filter::Filterable;
     /// use icu_locid::LanguageIdentifier;
-    /// use icu_locid::{language, locale, langid};
+    /// use icu_locid::{langid, locale, subtags_language as language};
+    /// use icu_provider::datagen::*;
+    /// use icu_provider::hello_world::*;
+    /// use icu_provider::prelude::*;
+    /// use icu_provider_adapters::filter::Filterable;
     ///
-    /// let provider = HelloWorldProvider::new_with_placeholder_data()
+    /// let provider = HelloWorldProvider
     ///     .filterable("Demo no-English filter")
     ///     .filter_by_langid(|langid| langid.language != language!("en"));
     ///
     /// // German requests should succeed:
     /// let req_de = DataRequest {
-    ///     options: locale!("de").into(),
+    ///     locale: &locale!("de").into(),
     ///     metadata: Default::default(),
     /// };
     /// let response: Result<DataResponse<HelloWorldV1Marker>, _> =
-    ///     provider.load_resource(&req_de);
+    ///     provider.load(req_de);
     /// assert!(matches!(response, Ok(_)));
     ///
     /// // English requests should fail:
     /// let req_en = DataRequest {
-    ///     options: locale!("en-US").into(),
+    ///     locale: &locale!("en-US").into(),
     ///     metadata: Default::default(),
     /// };
     /// let response: Result<DataResponse<HelloWorldV1Marker>, _> =
-    ///     provider.load_resource(&req_en);
+    ///     provider.load(req_en);
     /// assert!(matches!(
     ///     response,
-    ///     Err(DataError { kind: DataErrorKind::FilteredResource, .. })
+    ///     Err(DataError {
+    ///         kind: DataErrorKind::FilteredResource,
+    ///         ..
+    ///     })
     /// ));
     ///
     /// // English should not appear in the iterator result:
-    /// let supported_langids = provider.supported_options()
+    /// let supported_langids = provider
+    ///     .supported_locales()
     ///     .expect("Should successfully make an iterator of supported locales")
+    ///     .into_iter()
     ///     .map(|options| options.get_langid())
     ///     .collect::<Vec<LanguageIdentifier>>();
     /// assert!(supported_langids.contains(&langid!("de")));
@@ -64,7 +72,7 @@ where
     pub fn filter_by_langid<'a>(
         self,
         predicate: impl Fn(&LanguageIdentifier) -> bool + Sync + 'a,
-    ) -> RequestFilterDataProvider<D, Box<dyn Fn(&DataRequest) -> bool + Sync + 'a>>
+    ) -> RequestFilterDataProviderOutput<'a, D>
     where
         F: 'a,
     {
@@ -75,7 +83,7 @@ where
                 if !(old_predicate)(request) {
                     return false;
                 }
-                predicate(&request.options.get_langid())
+                predicate(&request.locale.get_langid())
             }),
             filter_name: self.filter_name,
         }
@@ -93,35 +101,38 @@ where
     /// # Examples
     ///
     /// ```
-    /// use icu_provider::prelude::*;
+    /// use icu_locid::{langid, locale};
     /// use icu_provider::hello_world::*;
+    /// use icu_provider::prelude::*;
     /// use icu_provider_adapters::filter::Filterable;
-    /// use icu_locid::{locale, langid};
     ///
     /// let allowlist = vec![langid!("de"), langid!("zh")];
-    /// let provider = HelloWorldProvider::new_with_placeholder_data()
+    /// let provider = HelloWorldProvider
     ///     .filterable("Demo German+Chinese filter")
     ///     .filter_by_langid_allowlist_strict(&allowlist);
     ///
     /// // German requests should succeed:
     /// let req_de = DataRequest {
-    ///     options: locale!("de").into(),
+    ///     locale: &locale!("de").into(),
     ///     metadata: Default::default(),
     /// };
     /// let response: Result<DataResponse<HelloWorldV1Marker>, _> =
-    ///     provider.load_resource(&req_de);
+    ///     provider.load(req_de);
     /// assert!(matches!(response, Ok(_)));
     ///
     /// // English requests should fail:
     /// let req_en = DataRequest {
-    ///     options: locale!("en-US").into(),
+    ///     locale: &locale!("en-US").into(),
     ///     metadata: Default::default(),
     /// };
     /// let response: Result<DataResponse<HelloWorldV1Marker>, _> =
-    ///     provider.load_resource(&req_en);
+    ///     provider.load(req_en);
     /// assert!(matches!(
     ///     response,
-    ///     Err(DataError { kind: DataErrorKind::FilteredResource, .. })
+    ///     Err(DataError {
+    ///         kind: DataErrorKind::FilteredResource,
+    ///         ..
+    ///     })
     /// ));
     /// assert_eq!(
     ///     response.unwrap_err().str_context,
@@ -131,7 +142,7 @@ where
     pub fn filter_by_langid_allowlist_strict<'a>(
         self,
         allowlist: &'a [LanguageIdentifier],
-    ) -> RequestFilterDataProvider<D, Box<dyn Fn(&DataRequest) -> bool + Sync + 'a>>
+    ) -> RequestFilterDataProviderOutput<'a, D>
     where
         F: 'a,
     {
@@ -142,7 +153,7 @@ where
                 if !(old_predicate)(request) {
                     return false;
                 }
-                request.options.is_langid_und() || allowlist.contains(&request.options.get_langid())
+                request.locale.is_langid_und() || allowlist.contains(&request.locale.get_langid())
             }),
             filter_name: self.filter_name,
         }
@@ -153,39 +164,40 @@ where
     /// # Examples
     ///
     /// ```
-    /// use icu_provider::prelude::*;
-    /// use icu_provider::hello_world::*;
-    /// use icu_provider_adapters::filter::Filterable;
     /// use icu_locid::locale;
+    /// use icu_provider::hello_world::*;
+    /// use icu_provider::prelude::*;
+    /// use icu_provider_adapters::filter::Filterable;
     ///
-    /// let provider = HelloWorldProvider::new_with_placeholder_data()
+    /// let provider = HelloWorldProvider
     ///     .filterable("Demo require-langid filter")
     ///     .require_langid();
     ///
     /// // Requests with a langid should succeed:
     /// let req_with_langid = DataRequest {
-    ///     options: locale!("de").into(),
+    ///     locale: &locale!("de").into(),
     ///     metadata: Default::default(),
     /// };
     /// let response: Result<DataResponse<HelloWorldV1Marker>, _> =
-    ///     provider.load_resource(&req_with_langid);
+    ///     provider.load(req_with_langid);
     /// assert!(matches!(response, Ok(_)));
     ///
     /// // Requests without a langid should fail:
     /// let req_no_langid = DataRequest {
-    ///     options: Default::default(),
+    ///     locale: Default::default(),
     ///     metadata: Default::default(),
     /// };
     /// let response: Result<DataResponse<HelloWorldV1Marker>, _> =
-    ///     provider.load_resource(&req_no_langid);
+    ///     provider.load(req_no_langid);
     /// assert!(matches!(
     ///     response,
-    ///     Err(DataError { kind: DataErrorKind::FilteredResource, .. })
+    ///     Err(DataError {
+    ///         kind: DataErrorKind::FilteredResource,
+    ///         ..
+    ///     })
     /// ));
     /// ```
-    pub fn require_langid<'a>(
-        self,
-    ) -> RequestFilterDataProvider<D, Box<dyn Fn(&DataRequest) -> bool + Sync + 'a>>
+    pub fn require_langid<'a>(self) -> RequestFilterDataProviderOutput<'a, D>
     where
         F: 'a,
     {
@@ -196,7 +208,7 @@ where
                 if !(old_predicate)(request) {
                     return false;
                 }
-                !request.options.is_langid_und()
+                !request.locale.is_langid_und()
             }),
             filter_name: self.filter_name,
         }

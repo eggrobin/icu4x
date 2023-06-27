@@ -133,7 +133,7 @@ their type.
 | datetime | `icu_datetime` | `use icu_datetime::DateTimeFormat` | `use icu::DateTimeFormat` |
 | datetime | `icu_datetime` | `use icu_datetime::skeleton::SkeletonField` | `use icu::datetime::skeleton::SkeletonField` |
 
-While the scheme may feel repetitive when looking at the import lines, it pays off in being unambigous without aliasing when multiple structs from different components get used together:
+While the scheme may feel repetitive when looking at the import lines, it pays off in being unambiguous without aliasing when multiple structs from different components get used together:
 
 ```rust
 use icu_locid::Locale;
@@ -183,9 +183,21 @@ Hopefully self explanatory. The less time we spend worrying about formatting and
 
 There are bound to be some cases where the linter makes suggestion we don't want to follow, but these should be rare. Any such false-positives should be [suppressed](https://github.com/rust-lang/rust-clippy#allowingdenying-lints) and commented for future maintainers.
 
-**Open Question**: Should we prohibit un-suppressed warnings as a github check?
+GitHub CI enforces ICU4X's clippy standards.
 
-**Open Question**: Is this including all the pedantic warnings?
+### Render visible characters in docs and code :: suggested
+
+Often in internationalization, we deal with code points from other scripts. It is suggested to put those code points directly into the file, _instead of_ using escape syntax such as `\u{1234}`. Exceptions may include:
+
+- If directly rendering the characters could cause confusion due to the bidi algorithm
+- If the test cares more about the code point values than the characters they represent
+
+### Render invisible characters in docs but escape them in code :: suggested
+
+There are several types of invisible code points in Unicode, including whitespace, zero-width characters, and bidi marks. The policy surrounding these characters is:
+
+- In docs tests: users are more interested in the end result, so favor rendering the invisible characters. When invisible characters could cause confusion, it is suggested to leave an unrendered docs comment, such as `# // The following line contains an invisible code point.`
+- In source code and unit tests: being explicit about invisible characters makes reading and modifying code more explicit for ICU4X developers, so favor using escape sequences.
 
 # Structs and Traits
 
@@ -541,7 +553,7 @@ Obviously where an if-statement is simply there to do optional work, and not cov
 
 ### Constructor conventions :: suggested
 
-If the struct doesn't require any arguments to be initialied, it should implement or derive the `Default` trait.
+If the struct doesn't require any arguments to be initialized, it should implement or derive the `Default` trait.
 For structs with argumented constructors, `new` or `try_new` methods should be used for canonical construction, `From` and `TryFrom` traits should be implemented for generic conversions and `from_*` and `try_from_*` for non-trait based specific conversions.
 
 | Type | Fallible | Trait | Use |
@@ -555,7 +567,7 @@ For structs with argumented constructors, `new` or `try_new` methods should be u
 | Other | 𐄂 | | `Struct::from_{name}(value);` |
 | Other | ✓ | | `Struct::try_from_{name}(value)?;` |
 
-## Structs With All Public Fields
+## Options structs With All Public Fields
 
 Many ICU related constructors require a number of options to be passed. In such cases, it is recommended to provide a separate structure that is used to assemble all required options, and pass it to the constructor.
 
@@ -574,6 +586,8 @@ fn main() {
 This model provides a good separation between the `options` struct which most likely will be mutable while used, and the final struct which can be optimized to only contain the final set of computed fields and remain immutable.
 
 The `#[non_exhaustive]` attribute disabled users ability to construct the Options struct manually, which enables us to extend the struct with additional features without breaking changes.
+
+See the [Exhaustiveness](#exhaustiveness--required) section for more details.
 
 ### Examples
 
@@ -715,7 +729,7 @@ Note that in cases where the Rust compiler can statically determine that a check
 
 ### Where Result is needed, use IcuResult<T> :: required
 
-While it's still an open question in the Rust community as to what the best way to handle error is, the current ICU4X concensus is that we should start simple and expect to revisit this topic again at some point. The simplest reasonable starting point would be to have a `IcuResult<T>`, which is type as `Result<T, IcuError>`, where:
+While it's still an open question in the Rust community as to what the best way to handle error is, the current ICU4X consensus is that we should start simple and expect to revisit this topic again at some point. The simplest reasonable starting point would be to have a `IcuResult<T>`, which is type as `Result<T, IcuError>`, where:
 
 ```rust
 // Nesting semantically interesting error information inside the generic error type.
@@ -768,6 +782,43 @@ If missing data signals a "hard" error from which the function cannot recover (e
 Call non-panicking data access APIs whenever data is not guaranteed to be safe.
 
 This should not include the contract of code in a different Crate. I.e. if a function in a different Crate promises to return a valid map key, but it's not a compile time checked type (like an enum), then the calling code must allow for it to fail.
+
+See also: the [Panics](#Panics--required) section of this document.
+
+#### Special Case: `split_at`
+
+The standard library functions such as `slice::split_at` are panicky, but they are not covered by our Clippy lints.
+
+Instead of using `slice::split_at` directly, it is recommended to use a helper function, which can be saved in the file in which it is being used. Example:
+
+```rust
+/// Like slice::split_at but returns an Option instead of panicking
+#[inline]
+fn debug_split_at(slice: &[u8], mid: usize) -> Option<(&[u8], &[u8])> {
+    if mid > slice.len() {
+        debug_assert!(false, "debug_split_at: index expected to be in range");
+        None
+    } else {
+        // Note: We're trusting the compiler to inline this and remove the assertion
+        // hiding on the top of slice::split_at: `assert(mid <= self.len())`
+        Some(slice.split_at(mid))
+    }
+}
+```
+
+#### Exception: Poison
+
+The `lock`, `read`, and `write` methods on `Mutex` and `RwLock` return `Result`s in case the lock got poisoned. This happens when the process holding the lock panics, so it is fine to panic when encountering a poison. For consistency we require poisons to be handled with `.expect("poison")`.
+
+### Avoid `to_string` :: suggested
+
+`to_string` delegates to the `Display` trait which is bad for code size as it pulls in a lot of formatting code.
+
+There are three types on which the standard library has *specialized implementations* for `to_string` that do not go through formatting logic: `&str`, `String`, and `char`. It would generally be acceptable to use `to_string` on these types, however types might not always be obvious to a reader, and implicit types might change with surrounding code (such as from `&str` to `&&str`, which is *not specialized*), so use `str::to_owned`, `String::clone`, and `String::from(char)` for clarity.
+
+Any other invocation of `to_string` should be carefully evaluated. It is usually better to work with values that implement `Display` and/or `Writeable` than to eagerly format and allocate strings.
+
+When comparing items in unit tests or docs, prefer semantic equality over stringified equality.
 
 ### Don't Handle Errors :: suggested
 
@@ -862,6 +913,45 @@ where
   return Ok(result)
 }
 ```
+
+# Lints
+
+Some lints should be enabled at the crate level for primary ICU4X crates. This guidance need not extend to utils.
+
+## Exhaustiveness :: required
+
+Crates should deny the `clippy::exhaustive_structs, clippy::exhaustive_enums` lints at the top-level so that our types default to being `#[non_exhaustive]`.
+
+These kinds of types _must_ be `#[non_exhaustive]`:
+
+ - Options structs
+ - Options enums
+ - Error enums
+ 
+Provider structs and enums _must not_ be `#[non_exhaustive]`. The provider module should ideally have `#[allow(clippy::exhaustive_structs, clippy::exhaustive_enums)]`. These are expected to be stable at the Postcard level. Exceptions _may_ be made in cases where the deserializer is written in a way that may accept future fields or variants.
+
+Most public newtypes and marker types should also be allowed to be exhaustive.
+
+Miscellaneous types with public fields may or may not be exhaustive based on need: if they are expected to be stable, they should be marked with an allow attribute and a comment explaining why. Otherwise, default to `#[non_exhaustive]`.
+
+## Panics :: required
+
+Crates should deny the `clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic` lints at the top-level to greatly reduce the number of panicky call sites in our code.
+
+In general, non-panicky APIs that return `Result`s or `Option`s should be preferred.
+
+`#[allow()]`s may be added, in cases where:
+
+ - The panic will only occur if fundamental invariants of the codebase are invalidated. This should be avoided as much as possible, however
+ - The API is clearly documented to be a panicky one and is not transitively used in other non-documented-as-panicky APIs.
+ - The panic would only occur due to an invalidation of an API that is checked _very nearby_.
+ - The code is pure test code.
+
+`#[allow()]`s should be documented with a comment.
+
+## Debug :: required
+
+Crates should deny the `missing_debug_implementations` lint at the top-level so that our types all have `Debug` implementations.
 
 # Imports and Configurations
 
@@ -976,9 +1066,9 @@ Thus we could provide one or more ICU4X traits bound to things like `str` to pro
 * [Introduction - Learning Rust With Entirely Too Many Linked Lists](https://rust-unofficial.github.io/too-many-lists/)
   * This is brilliantly written and very educational about how you get into a Rust mindset.
 * [Elegant Library APIs in Rust](https://deterministic.space/elegant-apis-in-rust.html)
-  * This has a lot of good points and is well worth a read, but be warned that some of the details about implementation are somehwat out of date (2017). It has a video too.
+  * This has a lot of good points and is well worth a read, but be warned that some of the details about implementation are somewhat out of date (2017). It has a video too.
 * [Good Practices for Writing Rust Libraries](https://pascalhertleif.de/artikel/good-practices-for-writing-rust-libraries/)
-  * Shorter and more focussed on the act of coding the libraries, and less about API design. Also potentially out of date in places.
+  * Shorter and more focused on the act of coding the libraries, and less about API design. Also potentially out of date in places.
 * [Strategies for Returning References in Rust](http://bryce.fisher-fleig.org/blog/strategies-for-returning-references-in-rust/index.html)
   * Though I don't believe we should be doing this, it's still an interesting read.
 

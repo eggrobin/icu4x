@@ -2,10 +2,11 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use super::vecs::MutableZeroVecLike;
+use super::vecs::{MutableZeroVecLike, ZeroVecLike};
 use crate::ule::*;
+use crate::vecs::{FlexZeroSlice, FlexZeroVec};
+use crate::vecs::{VarZeroSlice, VarZeroVec};
 use crate::zerovec::{ZeroSlice, ZeroVec};
-use crate::VarZeroVec;
 use alloc::boxed::Box;
 
 /// Trait marking types which are allowed to be keys or values in [`ZeroMap`](super::ZeroMap).
@@ -17,8 +18,14 @@ use alloc::boxed::Box;
 #[allow(clippy::upper_case_acronyms)] // KV is not an acronym
 pub trait ZeroMapKV<'a> {
     /// The container that can be used with this type: [`ZeroVec`] or [`VarZeroVec`].
-    type Container: MutableZeroVecLike<'a, Self, GetType = Self::GetType, OwnedType = Self::OwnedType>
-        + Sized;
+    type Container: MutableZeroVecLike<
+            'a,
+            Self,
+            SliceVariant = Self::Slice,
+            GetType = Self::GetType,
+            OwnedType = Self::OwnedType,
+        > + Sized;
+    type Slice: ZeroVecLike<Self, GetType = Self::GetType> + ?Sized;
     /// The type produced by `Container::get()`
     ///
     /// This type will be predetermined by the choice of `Self::Container`:
@@ -38,16 +45,19 @@ macro_rules! impl_sized_kv {
     ($ty:ident) => {
         impl<'a> ZeroMapKV<'a> for $ty {
             type Container = ZeroVec<'a, $ty>;
+            type Slice = ZeroSlice<$ty>;
             type GetType = <$ty as AsULE>::ULE;
             type OwnedType = $ty;
         }
     };
 }
 
+impl_sized_kv!(u8);
 impl_sized_kv!(u16);
 impl_sized_kv!(u32);
 impl_sized_kv!(u64);
 impl_sized_kv!(u128);
+impl_sized_kv!(i8);
 impl_sized_kv!(i16);
 impl_sized_kv!(i32);
 impl_sized_kv!(i64);
@@ -56,8 +66,19 @@ impl_sized_kv!(char);
 impl_sized_kv!(f32);
 impl_sized_kv!(f64);
 
-impl<'a, T: AsULE + 'static> ZeroMapKV<'a> for Option<T> {
+impl<'a> ZeroMapKV<'a> for usize {
+    type Container = FlexZeroVec<'a>;
+    type Slice = FlexZeroSlice;
+    type GetType = [u8];
+    type OwnedType = usize;
+}
+
+impl<'a, T> ZeroMapKV<'a> for Option<T>
+where
+    Option<T>: AsULE + 'static,
+{
     type Container = ZeroVec<'a, Option<T>>;
+    type Slice = ZeroSlice<Option<T>>;
     type GetType = <Option<T> as AsULE>::ULE;
     type OwnedType = Option<T>;
 }
@@ -67,12 +88,14 @@ where
     T: VarULE + ?Sized,
 {
     type Container = VarZeroVec<'a, OptionVarULE<T>>;
+    type Slice = VarZeroSlice<OptionVarULE<T>>;
     type GetType = OptionVarULE<T>;
     type OwnedType = Box<OptionVarULE<T>>;
 }
 
 impl<'a> ZeroMapKV<'a> for str {
     type Container = VarZeroVec<'a, str>;
+    type Slice = VarZeroSlice<str>;
     type GetType = str;
     type OwnedType = Box<str>;
 }
@@ -82,12 +105,27 @@ where
     T: ULE + AsULE<ULE = T>,
 {
     type Container = VarZeroVec<'a, [T]>;
+    type Slice = VarZeroSlice<[T]>;
     type GetType = [T];
     type OwnedType = Box<[T]>;
 }
 
-impl<'a, T: AsULE + 'static> ZeroMapKV<'a> for ZeroSlice<T> {
+impl<'a, T, const N: usize> ZeroMapKV<'a> for [T; N]
+where
+    T: AsULE + 'static,
+{
+    type Container = ZeroVec<'a, [T; N]>;
+    type Slice = ZeroSlice<[T; N]>;
+    type GetType = [T::ULE; N];
+    type OwnedType = [T; N];
+}
+
+impl<'a, T> ZeroMapKV<'a> for ZeroSlice<T>
+where
+    T: AsULE + 'static,
+{
     type Container = VarZeroVec<'a, ZeroSlice<T>>;
+    type Slice = VarZeroSlice<ZeroSlice<T>>;
     type GetType = ZeroSlice<T>;
     type OwnedType = Box<ZeroSlice<T>>;
 }

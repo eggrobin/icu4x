@@ -34,8 +34,8 @@
 //!
 //! # Cargo features
 //!
-//! This crate has five optional features:
-//!  -  `serde` and `serde_serialize`: Allows serializing and deserializing `zerovec`'s abstractions via [`serde`](https://docs.rs/serde)
+//! This crate has several optional Cargo features:
+//!  -  `serde`: Allows serializing and deserializing `zerovec`'s abstractions via [`serde`](https://docs.rs/serde)
 //!  -   `yoke`: Enables implementations of `Yokeable` from the [`yoke`](https://docs.rs/yoke/) crate, which is also useful
 //!              in situations involving a lot of zero-copy deserialization.
 //!  - `derive`: Makes it easier to use custom types in these collections by providing the [`#[make_ule]`](crate::make_ule) and
@@ -54,8 +54,8 @@
 //! Serialize and deserialize a struct with ZeroVec and VarZeroVec with Bincode:
 //!
 //! ```
-//! # #[cfg(feature = "serde_serialize")] {
-//! use zerovec::{ZeroVec, VarZeroVec};
+//! # #[cfg(feature = "serde")] {
+//! use zerovec::{VarZeroVec, ZeroVec};
 //!
 //! // This example requires the "serde" feature
 //! #[derive(serde::Serialize, serde::Deserialize)]
@@ -70,12 +70,12 @@
 //!
 //! let data = DataStruct {
 //!     nums: ZeroVec::from_slice_or_alloc(&[211, 281, 421, 461]),
-//!     chars: ZeroVec::from_slice_or_alloc(&['ö', '冇', 'म']),
+//!     chars: ZeroVec::alloc_from_slice(&['ö', '冇', 'म']),
 //!     strs: VarZeroVec::from(&["hello", "world"]),
 //! };
-//! let bincode_bytes = bincode::serialize(&data)
-//!     .expect("Serialization should be successful");
-//! assert_eq!(bincode_bytes.len(), 74);
+//! let bincode_bytes =
+//!     bincode::serialize(&data).expect("Serialization should be successful");
+//! assert_eq!(bincode_bytes.len(), 67);
 //!
 //! let deserialized: DataStruct = bincode::deserialize(&bincode_bytes)
 //!     .expect("Deserialization should be successful");
@@ -83,14 +83,14 @@
 //! assert_eq!(deserialized.chars.get(1), Some('冇'));
 //! assert_eq!(deserialized.strs.get(1), Some("world"));
 //! // The deserialization will not have allocated anything
-//! assert!(matches!(deserialized.nums, ZeroVec::Borrowed(_)));
-//! # } // feature = "serde_serialize"
+//! assert!(!deserialized.nums.is_owned());
+//! # } // feature = "serde"
 //! ```
 //!
 //! Use custom types inside of ZeroVec:
 //!
 //! ```rust
-//! # #[cfg(all(feature = "serde_serialize", feature = "derive"))] {
+//! # #[cfg(all(feature = "serde", feature = "derive"))] {
 //! use zerovec::{ZeroVec, VarZeroVec, ZeroMap};
 //! use std::borrow::Cow;
 //! use zerovec::ule::encode_varule_to_box;
@@ -149,7 +149,7 @@
 //!
 //! let bincode_bytes = bincode::serialize(&data)
 //!     .expect("Serialization should be successful");
-//! assert_eq!(bincode_bytes.len(), 180);
+//! assert_eq!(bincode_bytes.len(), 168);
 //!
 //! let deserialized: Data = bincode::deserialize(&bincode_bytes)
 //!     .expect("Deserialization should be successful");
@@ -201,7 +201,10 @@
         clippy::indexing_slicing,
         clippy::unwrap_used,
         clippy::expect_used,
-        clippy::panic
+        clippy::panic,
+        clippy::exhaustive_structs,
+        clippy::exhaustive_enums,
+        missing_debug_implementations,
     )
 )]
 // this crate does a lot of nuanced lifetime manipulation, being explicit
@@ -211,6 +214,9 @@
 extern crate alloc;
 
 mod error;
+mod flexzerovec;
+#[cfg(feature = "hashmap")]
+pub mod hashmap;
 mod map;
 mod map2d;
 #[cfg(test)]
@@ -227,10 +233,14 @@ mod yoke_impls;
 mod zerofrom_impls;
 
 pub use crate::error::ZeroVecError;
+#[cfg(feature = "hashmap")]
+pub use crate::hashmap::ZeroHashMap;
 pub use crate::map::map::ZeroMap;
 pub use crate::map2d::map::ZeroMap2d;
 pub use crate::varzerovec::{slice::VarZeroSlice, vec::VarZeroVec};
 pub use crate::zerovec::{ZeroSlice, ZeroVec};
+
+pub(crate) use flexzerovec::chunk_to_usize;
 
 #[doc(hidden)]
 pub mod __zerovec_internal_reexport {
@@ -252,9 +262,9 @@ pub mod maps {
     //! relaxed lifetime constraints.
     //!
     //! The [`ZeroMapKV`] trait is required to be implemented on any type that needs to be used
-    //! within a map type. [`ZeroVecLike`], [`BorrowedZeroVecLike`], and [`MutableZeroVecLike`] are
-    //! all traits used in the internal workings of the map types, and should typically not be used
-    //! or implemented by users of this crate.
+    //! within a map type. [`ZeroVecLike`] and [`MutableZeroVecLike`] are traits used in the
+    //! internal workings of the map types, and should typically not be used or implemented by
+    //! users of this crate.
     #[doc(no_inline)]
     pub use crate::map::ZeroMap;
     pub use crate::map::ZeroMapBorrowed;
@@ -263,8 +273,9 @@ pub mod maps {
     pub use crate::map2d::ZeroMap2d;
     pub use crate::map2d::ZeroMap2dBorrowed;
 
-    pub use crate::map::{BorrowedZeroVecLike, MutableZeroVecLike, ZeroMapKV, ZeroVecLike};
-    pub use crate::map2d::KeyError;
+    pub use crate::map::{MutableZeroVecLike, ZeroMapKV, ZeroVecLike};
+
+    pub use crate::map2d::ZeroMap2dCursor;
 }
 
 pub mod vecs {
@@ -284,7 +295,47 @@ pub mod vecs {
     #[doc(no_inline)]
     pub use crate::varzerovec::{VarZeroSlice, VarZeroVec};
 
-    pub use crate::varzerovec::VarZeroVecOwned;
+    pub use crate::varzerovec::{Index16, Index32, VarZeroVecFormat, VarZeroVecOwned};
+
+    pub use crate::flexzerovec::{FlexZeroSlice, FlexZeroVec, FlexZeroVecOwned};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::mem::size_of;
+
+    /// Checks that the size of the type is one of the given sizes.
+    /// The size might differ across Rust versions or channels.
+    macro_rules! check_size_of {
+        ($sizes:pat, $type:path) => {
+            assert!(
+                matches!(size_of::<$type>(), $sizes),
+                concat!(stringify!($type), " is of size {}"),
+                size_of::<$type>()
+            );
+        };
+    }
+
+    #[test]
+    fn check_sizes() {
+        check_size_of!(24, ZeroVec<u8>);
+        check_size_of!(24, ZeroVec<u32>);
+        check_size_of!(32 | 24, VarZeroVec<[u8]>);
+        check_size_of!(32 | 24, VarZeroVec<str>);
+        check_size_of!(48, ZeroMap<u32, u32>);
+        check_size_of!(56 | 48, ZeroMap<u32, str>);
+        check_size_of!(56 | 48, ZeroMap<str, u32>);
+        check_size_of!(64 | 48, ZeroMap<str, str>);
+        check_size_of!(120 | 96, ZeroMap2d<str, str, str>);
+        check_size_of!(32 | 24, vecs::FlexZeroVec);
+
+        check_size_of!(32, Option<ZeroVec<u8>>);
+        check_size_of!(32, Option<VarZeroVec<str>>);
+        check_size_of!(64 | 56, Option<ZeroMap<str, str>>);
+        check_size_of!(120 | 104, Option<ZeroMap2d<str, str, str>>);
+        check_size_of!(32, Option<vecs::FlexZeroVec>);
+    }
 }
 
 // Proc macro reexports
@@ -330,23 +381,50 @@ pub mod vecs {
 /// use zerovec::ZeroVec;
 ///
 /// #[zerovec::make_ule(DateULE)]
-/// #[derive(Copy, Clone, PartialEq, Eq, Ord, PartialOrd, serde::Serialize, serde::Deserialize)]
+/// #[derive(
+///     Copy,
+///     Clone,
+///     PartialEq,
+///     Eq,
+///     Ord,
+///     PartialOrd,
+///     serde::Serialize,
+///     serde::Deserialize,
+/// )]
 /// struct Date {
 ///     y: u64,
 ///     m: u8,
-///     d: u8
+///     d: u8,
 /// }
 ///
 /// #[derive(serde::Serialize, serde::Deserialize)]
 /// struct Dates<'a> {
 ///     #[serde(borrow)]
-///     dates: ZeroVec<'a, Date>   
+///     dates: ZeroVec<'a, Date>,
 /// }
 ///
-/// let dates = Dates { dates: ZeroVec::alloc_from_slice(&[Date {y: 1985, m: 9, d: 3}, Date {y: 1970, m: 2, d: 20}, Date {y: 1990, m: 6, d: 13}]) };
+/// let dates = Dates {
+///     dates: ZeroVec::alloc_from_slice(&[
+///         Date {
+///             y: 1985,
+///             m: 9,
+///             d: 3,
+///         },
+///         Date {
+///             y: 1970,
+///             m: 2,
+///             d: 20,
+///         },
+///         Date {
+///             y: 1990,
+///             m: 6,
+///             d: 13,
+///         },
+///     ]),
+/// };
 ///
-/// let bincode_bytes = bincode::serialize(&dates)
-///     .expect("Serialization should be successful");
+/// let bincode_bytes =
+///     bincode::serialize(&dates).expect("Serialization should be successful");
 ///
 /// // Will deserialize without allocations
 /// let deserialized: Dates = bincode::deserialize(&bincode_bytes)
@@ -354,7 +432,6 @@ pub mod vecs {
 ///
 /// assert_eq!(deserialized.dates.get(1).unwrap().y, 1970);
 /// assert_eq!(deserialized.dates.get(2).unwrap().d, 13);
-///
 /// ```
 #[cfg(feature = "derive")]
 pub use zerovec_derive::make_ule;
@@ -362,8 +439,10 @@ pub use zerovec_derive::make_ule;
 /// Generate a corresponding [`VarULE`] type and the relevant [`EncodeAsVarULE`]/[`zerofrom::ZeroFrom`]
 /// implementations for this type
 ///
-/// This can be attached to structs containing only [`AsULE`] types with the last field being [`Cow<'a, str>`](alloc::borrow::Cow),
-/// [`Cow<'a, str>`](alloc::borrow::Cow), [`ZeroSlice`], or [`VarZeroSlice`].
+/// This can be attached to structs containing only [`AsULE`] types with the last fields being
+/// [`Cow<'a, str>`](alloc::borrow::Cow), [`ZeroSlice`], or [`VarZeroSlice`]. If there is more than one such field, it will be represented
+/// using [`MultiFieldsULE`](crate::ule::MultiFieldsULE) and getters will be generated. Other VarULE fields will be detected if they are
+/// tagged with `#[zerovec::varule(NameOfVarULETy)]`.
 ///
 /// The type must be [`PartialEq`] and [`Eq`].
 ///
@@ -405,10 +484,10 @@ pub use zerovec_derive::make_ule;
 /// # Example
 ///
 /// ```rust
-/// use zerovec::{ZeroVec, VarZeroVec, ZeroMap};
 /// use std::borrow::Cow;
-/// use zerovec::ule::encode_varule_to_box;
 /// use zerofrom::ZeroFrom;
+/// use zerovec::ule::encode_varule_to_box;
+/// use zerovec::{VarZeroVec, ZeroMap, ZeroVec};
 ///
 /// // custom fixed-size ULE type for ZeroVec
 /// #[zerovec::make_ule(DateULE)]
@@ -416,7 +495,7 @@ pub use zerovec_derive::make_ule;
 /// struct Date {
 ///     y: u64,
 ///     m: u8,
-///     d: u8
+///     d: u8,
 /// }
 ///
 /// // custom variable sized VarULE type for VarZeroVec
@@ -437,34 +516,41 @@ pub use zerovec_derive::make_ule;
 ///     important_people: VarZeroVec<'a, PersonULE>,
 /// }
 ///
-///
 /// let person1 = Person {
-///     birthday: Date { y: 1990, m: 9, d: 7},
+///     birthday: Date {
+///         y: 1990,
+///         m: 9,
+///         d: 7,
+///     },
 ///     favorite_character: 'π',
-///     name: Cow::from("Kate")
+///     name: Cow::from("Kate"),
 /// };
 /// let person2 = Person {
-///     birthday: Date { y: 1960, m: 5, d: 25},
+///     birthday: Date {
+///         y: 1960,
+///         m: 5,
+///         d: 25,
+///     },
 ///     favorite_character: '冇',
-///     name: Cow::from("Jesse")
+///     name: Cow::from("Jesse"),
 /// };
 ///
 /// let important_people = VarZeroVec::from(&[person1, person2]);
 /// let data = Data { important_people };
 ///
-/// let bincode_bytes = bincode::serialize(&data)
-///     .expect("Serialization should be successful");
+/// let bincode_bytes = bincode::serialize(&data).expect("Serialization should be successful");
 ///
 /// // Will deserialize without allocations
-/// let deserialized: Data = bincode::deserialize(&bincode_bytes)
-///     .expect("Deserialization should be successful");
+/// let deserialized: Data =
+///     bincode::deserialize(&bincode_bytes).expect("Deserialization should be successful");
 ///
 /// assert_eq!(&deserialized.important_people.get(1).unwrap().name, "Jesse");
 /// assert_eq!(&deserialized.important_people.get(0).unwrap().name, "Kate");
 ///
 /// // Since VarZeroVec produces PersonULE types, it's convenient to use ZeroFrom
 /// // to recoup Person values in a zero-copy way
-/// let person_converted: Person = ZeroFrom::zero_from(deserialized.important_people.get(1).unwrap());
+/// let person_converted: Person =
+///     ZeroFrom::zero_from(deserialized.important_people.get(1).unwrap());
 /// assert_eq!(person_converted.name, "Jesse");
 /// assert_eq!(person_converted.birthday.y, 1960);
 /// ```

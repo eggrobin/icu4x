@@ -3,45 +3,45 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 use icu_locid::locale;
-use icu_plurals::{
-    provider::CardinalV1Marker, rules::runtime::ast::Rule, PluralCategory, PluralRuleType,
-    PluralRules,
-};
+use icu_plurals::{provider::CardinalV1Marker, PluralCategory, PluralRuleType, PluralRules};
 use icu_provider::prelude::*;
-use zerovec::VarZeroVec;
 
 #[test]
 fn test_plural_rules() {
-    let provider = icu_testdata::get_provider();
-
-    let pr = PluralRules::try_new(locale!("en"), &provider, PluralRuleType::Cardinal).unwrap();
-
-    assert_eq!(pr.select(5_usize), PluralCategory::Other);
+    assert_eq!(
+        PluralRules::try_new_unstable(
+            &icu_testdata::unstable(),
+            &locale!("en").into(),
+            PluralRuleType::Cardinal
+        )
+        .unwrap()
+        .category_for(5_usize),
+        PluralCategory::Other
+    );
 }
 
 #[test]
-fn test_static_provider_borrowed_rules() {
-    let provider = icu_testdata::get_static_provider();
-
-    let rules: DataPayload<CardinalV1Marker> = provider
-        .load_resource(&DataRequest {
-            options: locale!("en").into(),
+fn test_static_load_works() {
+    DataProvider::<CardinalV1Marker>::load(
+        &icu_testdata::unstable(),
+        DataRequest {
+            locale: &locale!("en").into(),
             metadata: Default::default(),
-        })
-        .expect("Failed to load payload")
-        .take_payload()
-        .expect("Failed to retrieve payload");
-    let rules = rules.get();
-    assert!(matches!(rules.one, Some(Rule(VarZeroVec::Borrowed(_)))));
+        },
+    )
+    .expect("Failed to load payload")
+    .take_payload()
+    .expect("Failed to retrieve payload");
 }
 
 #[test]
 fn test_plural_rules_missing() {
-    let provider = icu_testdata::get_provider();
-
-    let pr = PluralRules::try_new(locale!("xx"), &provider, PluralRuleType::Cardinal);
-
-    assert!(pr.is_err());
+    assert!(PluralRules::try_new_unstable(
+        &icu_testdata::unstable_no_fallback(),
+        &locale!("xx").into(),
+        PluralRuleType::Cardinal
+    )
+    .is_err());
 }
 
 #[test]

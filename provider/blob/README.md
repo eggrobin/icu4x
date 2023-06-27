@@ -1,37 +1,19 @@
 # icu_provider_blob [![crates.io](https://img.shields.io/crates/v/icu_provider_blob)](https://crates.io/crates/icu_provider_blob)
 
-`icu_provider_blob` contains implementations of the [`ICU4X`] [`BufferProvider`] interface
-that load data from a single blob.
+`icu_provider_blob` contains [`BlobDataProvider`], a [`BufferProvider`] implementation that
+supports loading data from a single serialized blob.
 
-There are two exports:
-
-1. [`BlobDataProvider`] supports data blobs loaded dynamically at runtime.
-2. [`StaticDataProvider`] supports data blobs baked into the binary at compile time.
-
-To build blob data, use the `--format blob` option of [`icu4x-datagen`]. For example, to build
-"hello world" data, run:
+To build blob data, use the `--format blob` option of [`icu_datagen`]:
 
 ```bash
-$ cargo run --bin=icu4x-datagen -- \
-    --format blob \
-    --hello-world-key \
-    --all-locales \
-    --out hello_world.postcard
+$ icu4x-datagen --keys all --locales full --format blob --out data.postcard
 ```
 
-## Example
-
-Create a [`StaticDataProvider`] from pre-built test data:
-
-```rust
-let _ = icu_testdata::get_static_provider();
-```
-
-For more examples, see the specific data providers.
+For examples, see the specific data providers.
 
 [`ICU4X`]: ../icu/index.html
 [`BufferProvider`]: icu_provider::BufferProvider
-[`icu4x-datagen`]: https://github.com/unicode-org/icu4x/tree/main/provider/datagen#readme
+[`icu_datagen`]: ../icu_datagen/index.html
 
 ## More Information
 

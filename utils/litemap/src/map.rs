@@ -2,33 +2,31 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
+use crate::store::*;
 use alloc::borrow::Borrow;
+use alloc::vec::Vec;
+use core::cmp::Ordering;
 use core::iter::FromIterator;
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Index, IndexMut};
 
-use crate::store::Store;
-use crate::store::StoreFromIterator;
-use crate::store::StoreIterable;
-
 /// A simple "flat" map based on a sorted vector
 ///
 /// See the [module level documentation][super] for why one should use this.
 ///
-/// The API is roughly similar to that of [`std::collections::HashMap`], though it
-/// requires `Ord` instead of `Hash`.
+/// The API is roughly similar to that of [`std::collections::BTreeMap`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
-pub struct LiteMap<K, V, S = alloc::vec::Vec<(K, V)>> {
+pub struct LiteMap<K: ?Sized, V: ?Sized, S = alloc::vec::Vec<(K, V)>> {
     pub(crate) values: S,
     pub(crate) _key_type: PhantomData<K>,
     pub(crate) _value_type: PhantomData<V>,
 }
 
 impl<K, V> LiteMap<K, V> {
-    /// Construct a new [`LiteMap`]
-    pub const fn new() -> Self {
+    /// Construct a new [`LiteMap`] backed by Vec
+    pub const fn new_vec() -> Self {
         Self {
             values: alloc::vec::Vec::new(),
             _key_type: PhantomData,
@@ -37,19 +35,45 @@ impl<K, V> LiteMap<K, V> {
     }
 }
 
-impl<K, V, S> LiteMap<K, V, S>
-where
-    S: Store<K, V>,
-{
-    /// Construct a new [`LiteMap`] with a given capacity
-    pub fn with_capacity(capacity: usize) -> Self {
+impl<K, V, S> LiteMap<K, V, S> {
+    /// Construct a new [`LiteMap`] using the given values
+    ///
+    /// The store must be sorted and have no duplicate keys.
+    pub const fn from_sorted_store_unchecked(values: S) -> Self {
         Self {
-            values: S::lm_with_capacity(capacity),
+            values,
             _key_type: PhantomData,
             _value_type: PhantomData,
         }
     }
+}
 
+impl<K, V> LiteMap<K, V, Vec<(K, V)>> {
+    /// Convert a [`LiteMap`] into a sorted `Vec<(K, V)>`.
+    #[inline]
+    pub fn into_tuple_vec(self) -> Vec<(K, V)> {
+        self.values
+    }
+}
+
+impl<K: ?Sized, V: ?Sized, S> LiteMap<K, V, S>
+where
+    S: StoreConstEmpty<K, V>,
+{
+    /// Create a new empty [`LiteMap`]
+    pub const fn new() -> Self {
+        Self {
+            values: S::EMPTY,
+            _key_type: PhantomData,
+            _value_type: PhantomData,
+        }
+    }
+}
+
+impl<K: ?Sized, V: ?Sized, S> LiteMap<K, V, S>
+where
+    S: Store<K, V>,
+{
     /// The number of elements in the [`LiteMap`]
     pub fn len(&self) -> usize {
         self.values.lm_len()
@@ -60,41 +84,6 @@ where
         self.values.lm_is_empty()
     }
 
-    /// Remove all elements from the [`LiteMap`]
-    pub fn clear(&mut self) {
-        self.values.lm_clear()
-    }
-
-    /// Reserve capacity for `additional` more elements to be inserted into
-    /// the [`LiteMap`] to avoid frequent reallocations.
-    ///
-    /// See [`Vec::reserve()`] for more information.
-    ///
-    /// [`Vec::reserve()`]: alloc::vec::Vec::reserve
-    pub fn reserve(&mut self, additional: usize) {
-        self.values.lm_reserve(additional)
-    }
-
-    /// Convert a `Vec<(K, V)>` into a [`LiteMap`].
-    ///
-    /// # Safety
-    ///
-    /// The vec must be sorted and have no duplicate keys.
-    #[inline]
-    pub unsafe fn from_tuple_vec_unchecked(values: S) -> Self {
-        Self {
-            values,
-            _key_type: PhantomData,
-            _value_type: PhantomData,
-        }
-    }
-
-    /// Convert a [`LiteMap`] into a `Vec<(K, V)>`.
-    #[inline]
-    pub fn into_tuple_vec(self) -> S {
-        self.values
-    }
-
     /// Get the key-value pair residing at a particular index
     ///
     /// In most cases, prefer [`LiteMap::get()`] over this method.
@@ -102,9 +91,43 @@ where
     pub fn get_indexed(&self, index: usize) -> Option<(&K, &V)> {
         self.values.lm_get(index)
     }
+
+    /// Get the lowest-rank key/value pair from the `LiteMap`, if it exists.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use litemap::LiteMap;
+    ///
+    /// let mut map: LiteMap<i32, &str, Vec<_>> =
+    ///     LiteMap::from_iter([(1, "uno"), (3, "tres")].into_iter());
+    ///
+    /// assert_eq!(map.first(), Some((&1, &"uno")));
+    /// ```
+    #[inline]
+    pub fn first(&self) -> Option<(&K, &V)> {
+        self.values.lm_get(0).map(|(k, v)| (k, v))
+    }
+
+    /// Get the highest-rank key/value pair from the `LiteMap`, if it exists.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use litemap::LiteMap;
+    ///
+    /// let mut map: LiteMap<i32, &str, Vec<_>> =
+    ///     LiteMap::from_iter([(1, "uno"), (3, "tres")].into_iter());
+    ///
+    /// assert_eq!(map.last(), Some((&3, &"tres")));
+    /// ```
+    #[inline]
+    pub fn last(&self) -> Option<(&K, &V)> {
+        self.values.lm_get(self.len() - 1).map(|(k, v)| (k, v))
+    }
 }
 
-impl<K, V, S> LiteMap<K, V, S>
+impl<K: ?Sized, V: ?Sized, S> LiteMap<K, V, S>
 where
     K: Ord,
     S: Store<K, V>,
@@ -114,7 +137,7 @@ where
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// let mut map = LiteMap::new();
+    /// let mut map = LiteMap::new_vec();
     /// map.insert(1, "one");
     /// map.insert(2, "two");
     /// assert_eq!(map.get(&1), Some(&"one"));
@@ -132,16 +155,22 @@ where
         }
     }
 
+    /// Binary search the map with `predicate` to find a key, returning the value.
+    pub fn get_by(&self, predicate: impl FnMut(&K) -> Ordering) -> Option<&V> {
+        let index = self.values.lm_binary_search_by(predicate).ok()?;
+        self.values.lm_get(index).map(|(_, v)| v)
+    }
+
     /// Returns whether `key` is contained in this map
     ///
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// let mut map = LiteMap::new();
+    /// let mut map = LiteMap::new_vec();
     /// map.insert(1, "one");
     /// map.insert(2, "two");
-    /// assert_eq!(map.contains_key(&1), true);
-    /// assert_eq!(map.contains_key(&3), false);
+    /// assert!(map.contains_key(&1));
+    /// assert!(!map.contains_key(&3));
     /// ```
     pub fn contains_key<Q: ?Sized>(&self, key: &Q) -> bool
     where
@@ -151,12 +180,63 @@ where
         self.find_index(key).is_ok()
     }
 
+    /// Obtain the index for a given key, or if the key is not found, the index
+    /// at which it would be inserted.
+    ///
+    /// (The return value works equivalently to [`slice::binary_search_by()`])
+    ///
+    /// The indices returned can be used with [`Self::get_indexed()`]. Prefer using
+    /// [`Self::get()`] directly where possible.
+    #[inline]
+    pub fn find_index<Q: ?Sized>(&self, key: &Q) -> Result<usize, usize>
+    where
+        K: Borrow<Q>,
+        Q: Ord,
+    {
+        self.values.lm_binary_search_by(|k| k.borrow().cmp(key))
+    }
+}
+
+impl<K, V, S> LiteMap<K, V, S>
+where
+    S: StoreMut<K, V>,
+{
+    /// Construct a new [`LiteMap`] with a given capacity
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            values: S::lm_with_capacity(capacity),
+            _key_type: PhantomData,
+            _value_type: PhantomData,
+        }
+    }
+
+    /// Remove all elements from the [`LiteMap`]
+    pub fn clear(&mut self) {
+        self.values.lm_clear()
+    }
+
+    /// Reserve capacity for `additional` more elements to be inserted into
+    /// the [`LiteMap`] to avoid frequent reallocations.
+    ///
+    /// See [`Vec::reserve()`] for more information.
+    ///
+    /// [`Vec::reserve()`]: alloc::vec::Vec::reserve
+    pub fn reserve(&mut self, additional: usize) {
+        self.values.lm_reserve(additional)
+    }
+}
+
+impl<K, V, S> LiteMap<K, V, S>
+where
+    K: Ord,
+    S: StoreMut<K, V>,
+{
     /// Get the value associated with `key`, if it exists, as a mutable reference.
     ///
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// let mut map = LiteMap::new();
+    /// let mut map = LiteMap::new_vec();
     /// map.insert(1, "one");
     /// map.insert(2, "two");
     /// if let Some(mut v) = map.get_mut(&1) {
@@ -176,49 +256,13 @@ where
         }
     }
 
-    /// Get the lowest-rank key/value pair from the `LiteMap`, if it exists.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use litemap::LiteMap;
-    ///
-    /// let mut map = LiteMap::new();
-    /// assert!(map.try_append(1, "uno").is_none());
-    /// assert!(map.try_append(3, "tres").is_none());
-    ///
-    /// assert_eq!(map.first(), Some((&1, &"uno")));
-    /// ```
-    #[inline]
-    pub fn first(&self) -> Option<(&K, &V)> {
-        self.values.lm_get(0).map(|(k, v)| (k, v))
-    }
-
-    /// Get the highest-rank key/value pair from the `LiteMap`, if it exists.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use litemap::LiteMap;
-    ///
-    /// let mut map = LiteMap::new();
-    /// assert!(map.try_append(1, "uno").is_none());
-    /// assert!(map.try_append(3, "tres").is_none());
-    ///
-    /// assert_eq!(map.last(), Some((&3, &"tres")));
-    /// ```
-    #[inline]
-    pub fn last(&self) -> Option<(&K, &V)> {
-        self.values.lm_get(self.len() - 1).map(|(k, v)| (k, v))
-    }
-
     /// Appends `value` with `key` to the end of the underlying vector, returning
     /// `key` and `value` _if it failed_. Useful for extending with an existing
     /// sorted list.
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// let mut map = LiteMap::new();
+    /// let mut map = LiteMap::new_vec();
     /// assert!(map.try_append(1, "uno").is_none());
     /// assert!(map.try_append(3, "tres").is_none());
     ///
@@ -257,7 +301,7 @@ where
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// let mut map = LiteMap::new();
+    /// let mut map = LiteMap::new_vec();
     /// map.insert(1, "one");
     /// map.insert(2, "two");
     /// assert_eq!(map.get(&1), Some(&"one"));
@@ -293,7 +337,7 @@ where
     /// ```
     /// use litemap::LiteMap;
     ///
-    /// let mut map = LiteMap::new();
+    /// let mut map = LiteMap::new_vec();
     /// map.insert(1, "one");
     /// map.insert(3, "three");
     ///
@@ -320,7 +364,7 @@ where
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// let mut map = LiteMap::new();
+    /// let mut map = LiteMap::new_vec();
     /// map.insert(1, "one");
     /// map.insert(2, "two");
     /// assert_eq!(map.remove(&1), Some("one"));
@@ -341,7 +385,7 @@ where
 impl<'a, K: 'a, V: 'a, S> LiteMap<K, V, S>
 where
     K: Ord,
-    S: StoreIterable<'a, K, V> + StoreFromIterator<K, V>,
+    S: StoreIterableMut<'a, K, V> + StoreFromIterator<K, V>,
 {
     /// Insert all elements from `other` into this `LiteMap`.
     ///
@@ -356,11 +400,11 @@ where
     /// ```
     /// use litemap::LiteMap;
     ///
-    /// let mut map1 = LiteMap::new();
+    /// let mut map1 = LiteMap::new_vec();
     /// map1.insert(1, "one");
     /// map1.insert(2, "two");
     ///
-    /// let mut map2 = LiteMap::new();
+    /// let mut map2 = LiteMap::new_vec();
     /// map2.insert(2, "TWO");
     /// map2.insert(4, "FOUR");
     ///
@@ -412,28 +456,6 @@ where
     }
 }
 
-impl<K, V, S> LiteMap<K, V, S>
-where
-    K: Ord,
-    S: Store<K, V>,
-{
-    /// Obtain the index for a given key, or if the key is not found, the index
-    /// at which it would be inserted.
-    ///
-    /// (The return value works equivalently to [`slice::binary_search_by()`])
-    ///
-    /// The indices returned can be used with [`Self::get_indexed()`]. Prefer using
-    /// [`Self::get()`] directly where possible.
-    #[inline]
-    pub fn find_index<Q: ?Sized>(&self, key: &Q) -> Result<usize, usize>
-    where
-        K: Borrow<Q>,
-        Q: Ord,
-    {
-        self.values.lm_binary_search_by(|k| k.borrow().cmp(key))
-    }
-}
-
 impl<K, V, S> Default for LiteMap<K, V, S>
 where
     S: Store<K, V> + Default,
@@ -453,39 +475,34 @@ where
 {
     type Output = V;
     fn index(&self, key: &K) -> &V {
-        #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        self.get(key).expect("LiteMap could not find key")
+        #[allow(clippy::panic)] // documented
+        match self.get(key) {
+            Some(v) => v,
+            None => panic!("no entry found for key"),
+        }
     }
 }
 impl<K, V, S> IndexMut<&'_ K> for LiteMap<K, V, S>
 where
     K: Ord,
-    S: Store<K, V>,
+    S: StoreMut<K, V>,
 {
     fn index_mut(&mut self, key: &K) -> &mut V {
-        #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        self.get_mut(key).expect("LiteMap could not find key")
+        #[allow(clippy::panic)] // documented
+        match self.get_mut(key) {
+            Some(v) => v,
+            None => panic!("no entry found for key"),
+        }
     }
 }
 impl<K, V, S> FromIterator<(K, V)> for LiteMap<K, V, S>
 where
     K: Ord,
-    S: Store<K, V>,
+    S: StoreFromIterable<K, V>,
 {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        let iter = iter.into_iter();
-        let mut map = match iter.size_hint() {
-            (_, Some(upper)) => Self::with_capacity(upper),
-            (lower, None) => Self::with_capacity(lower),
-        };
-
-        for (key, value) in iter {
-            if let Some((key, value)) = map.try_append(key, value) {
-                map.insert(key, value);
-            }
-        }
-
-        map
+        let values = S::lm_sort_from_iter(iter);
+        Self::from_sorted_store_unchecked(values)
     }
 }
 
@@ -507,7 +524,12 @@ where
     pub fn iter_values(&'a self) -> impl Iterator<Item = &'a V> + DoubleEndedIterator {
         self.values.lm_iter().map(|val| val.1)
     }
+}
 
+impl<'a, K: 'a, V: 'a, S> LiteMap<K, V, S>
+where
+    S: StoreIterableMut<'a, K, V>,
+{
     /// Produce an ordered mutable iterator over key-value pairs
     pub fn iter_mut(
         &'a mut self,
@@ -518,7 +540,7 @@ where
 
 impl<K, V, S> LiteMap<K, V, S>
 where
-    S: Store<K, V>,
+    S: StoreMut<K, V>,
 {
     /// Retains only the elements specified by the predicate.
     ///
@@ -529,7 +551,7 @@ where
     /// ```rust
     /// use litemap::LiteMap;
     ///
-    /// let mut map = LiteMap::new();
+    /// let mut map = LiteMap::new_vec();
     /// map.insert(1, "one");
     /// map.insert(2, "two");
     /// map.insert(3, "three");
@@ -549,9 +571,228 @@ where
     }
 }
 
+impl<'a, K, V> LiteMap<K, V, &'a [(K, V)]> {
+    /// Const version of [`LiteMap::len()`] for a slice store.
+    ///
+    /// Note: This function will no longer be needed if const trait behavior is stabilized.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use litemap::LiteMap;
+    ///
+    /// static map: LiteMap<&str, usize, &[(&str, usize)]> = LiteMap::from_sorted_store_unchecked(&[
+    ///     ("a", 11),
+    ///     ("b", 22),
+    /// ]);
+    /// static len: usize = map.const_len();
+    /// assert_eq!(len, 2);
+    /// ```
+    #[inline]
+    pub const fn const_len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Const version of [`LiteMap::is_empty()`] for a slice store.
+    ///
+    /// Note: This function will no longer be needed if const trait behavior is stabilized.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use litemap::LiteMap;
+    ///
+    /// static map: LiteMap<&str, usize, &[(&str, usize)]> = LiteMap::from_sorted_store_unchecked(&[]);
+    /// static is_empty: bool = map.const_is_empty();
+    /// assert!(is_empty);
+    /// ```
+    #[inline]
+    pub const fn const_is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Const version of [`LiteMap::get_indexed()`] for a slice store.
+    ///
+    /// Note: This function will no longer be needed if const trait behavior is stabilized.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use litemap::LiteMap;
+    ///
+    /// static map: LiteMap<&str, usize, &[(&str, usize)]> = LiteMap::from_sorted_store_unchecked(&[
+    ///     ("a", 11),
+    ///     ("b", 22),
+    /// ]);
+    /// static t: &(&str, usize) = map.const_get_indexed_or_panic(0);
+    /// assert_eq!(t.0, "a");
+    /// assert_eq!(t.1, 11);
+    /// ```
+    #[inline]
+    #[allow(clippy::indexing_slicing)] // documented
+    pub const fn const_get_indexed_or_panic(&self, index: usize) -> &'a (K, V) {
+        &self.values[index]
+    }
+}
+
+const fn const_cmp_bytes(a: &[u8], b: &[u8]) -> Ordering {
+    let (max, default) = if a.len() == b.len() {
+        (a.len(), Ordering::Equal)
+    } else if a.len() < b.len() {
+        (a.len(), Ordering::Less)
+    } else {
+        (b.len(), Ordering::Greater)
+    };
+    let mut i = 0;
+    #[allow(clippy::indexing_slicing)] // indexes in range by above checks
+    while i < max {
+        if a[i] == b[i] {
+            i += 1;
+            continue;
+        } else if a[i] < b[i] {
+            return Ordering::Less;
+        } else {
+            return Ordering::Greater;
+        }
+    }
+    default
+}
+
+impl<'a, V> LiteMap<&'a str, V, &'a [(&'a str, V)]> {
+    /// Const function to get the value associated with a `&str` key, if it exists.
+    ///
+    /// Also returns the index of the value.
+    ///
+    /// Note: This function will no longer be needed if const trait behavior is stabilized.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use litemap::LiteMap;
+    ///
+    /// static map: LiteMap<&str, usize, &[(&str, usize)]> = LiteMap::from_sorted_store_unchecked(&[
+    ///     ("abc", 11),
+    ///     ("bcd", 22),
+    ///     ("cde", 33),
+    ///     ("def", 44),
+    ///     ("efg", 55),
+    /// ]);
+    ///
+    /// static d: Option<(usize, &usize)> = map.const_get_with_index("def");
+    /// assert_eq!(d, Some((3, &44)));
+    ///
+    /// static n: Option<(usize, &usize)> = map.const_get_with_index("dng");
+    /// assert_eq!(n, None);
+    /// ```
+    pub const fn const_get_with_index(&self, key: &str) -> Option<(usize, &'a V)> {
+        let mut i = 0;
+        let mut j = self.const_len();
+        while i < j {
+            let mid = (i + j) / 2;
+            #[allow(clippy::indexing_slicing)] // in range
+            let x = &self.values[mid];
+            match const_cmp_bytes(key.as_bytes(), x.0.as_bytes()) {
+                Ordering::Equal => return Some((mid, &x.1)),
+                Ordering::Greater => i = mid + 1,
+                Ordering::Less => j = mid,
+            };
+        }
+        None
+    }
+}
+
+impl<'a, V> LiteMap<&'a [u8], V, &'a [(&'a [u8], V)]> {
+    /// Const function to get the value associated with a `&[u8]` key, if it exists.
+    ///
+    /// Also returns the index of the value.
+    ///
+    /// Note: This function will no longer be needed if const trait behavior is stabilized.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use litemap::LiteMap;
+    ///
+    /// static map: LiteMap<&[u8], usize, &[(&[u8], usize)]> = LiteMap::from_sorted_store_unchecked(&[
+    ///     (b"abc", 11),
+    ///     (b"bcd", 22),
+    ///     (b"cde", 33),
+    ///     (b"def", 44),
+    ///     (b"efg", 55),
+    /// ]);
+    ///
+    /// static d: Option<(usize, &usize)> = map.const_get_with_index(b"def");
+    /// assert_eq!(d, Some((3, &44)));
+    ///
+    /// static n: Option<(usize, &usize)> = map.const_get_with_index(b"dng");
+    /// assert_eq!(n, None);
+    /// ```
+    pub const fn const_get_with_index(&self, key: &[u8]) -> Option<(usize, &'a V)> {
+        let mut i = 0;
+        let mut j = self.const_len();
+        while i < j {
+            let mid = (i + j) / 2;
+            #[allow(clippy::indexing_slicing)] // in range
+            let x = &self.values[mid];
+            match const_cmp_bytes(key, x.0) {
+                Ordering::Equal => return Some((mid, &x.1)),
+                Ordering::Greater => i = mid + 1,
+                Ordering::Less => j = mid,
+            };
+        }
+        None
+    }
+}
+
+macro_rules! impl_const_get_with_index_for_integer {
+    ($integer:ty) => {
+        impl<'a, V> LiteMap<$integer, V, &'a [($integer, V)]> {
+            /// Const function to get the value associated with an integer key, if it exists.
+            ///
+            /// Note: This function will no longer be needed if const trait behavior is stabilized.
+            ///
+            /// Also returns the index of the value.
+            pub const fn const_get_with_index(&self, key: $integer) -> Option<(usize, &'a V)> {
+                let mut i = 0;
+                let mut j = self.const_len();
+                while i < j {
+                    let mid = (i + j) / 2;
+                    #[allow(clippy::indexing_slicing)] // in range
+                    let x = &self.values[mid];
+                    if key == x.0 {
+                        return Some((mid, &x.1));
+                    } else if key > x.0 {
+                        i = mid + 1;
+                    } else {
+                        j = mid;
+                    }
+                }
+                return None;
+            }
+        }
+    };
+}
+
+impl_const_get_with_index_for_integer!(u8);
+impl_const_get_with_index_for_integer!(u16);
+impl_const_get_with_index_for_integer!(u32);
+impl_const_get_with_index_for_integer!(u64);
+impl_const_get_with_index_for_integer!(u128);
+impl_const_get_with_index_for_integer!(usize);
+impl_const_get_with_index_for_integer!(i8);
+impl_const_get_with_index_for_integer!(i16);
+impl_const_get_with_index_for_integer!(i32);
+impl_const_get_with_index_for_integer!(i64);
+impl_const_get_with_index_for_integer!(i128);
+impl_const_get_with_index_for_integer!(isize);
+
 #[cfg(test)]
 mod test {
-    use crate::LiteMap;
+    use super::*;
 
     #[test]
     fn from_iterator() {
@@ -574,7 +815,6 @@ mod test {
 
         assert_eq!(expected, actual);
     }
-
     fn make_13() -> LiteMap<usize, &'static str> {
         let mut result = LiteMap::new();
         result.insert(1, "one");
@@ -633,5 +873,17 @@ mod test {
             .ok_or(())
             .expect("Insert with conflict");
         assert_eq!(map.len(), 5);
+    }
+
+    #[test]
+    fn test_const_cmp_bytes() {
+        let strs = &["a", "aa", "abc", "abde", "bcd", "bcde"];
+        for i in 0..strs.len() {
+            for j in 0..strs.len() {
+                let a = strs[i].as_bytes();
+                let b = strs[j].as_bytes();
+                assert_eq!(a.cmp(b), const_cmp_bytes(a, b));
+            }
+        }
     }
 }

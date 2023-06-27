@@ -3,16 +3,16 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 use super::LiteMap;
-use crate::store::Store;
+use crate::store::*;
 use core::fmt;
 use core::marker::PhantomData;
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
-#[cfg(feature = "serde_serialize")]
+#[cfg(feature = "serde")]
 use serde::{ser::SerializeMap, Serialize, Serializer};
 
-#[cfg(feature = "serde_serialize")]
+#[cfg(feature = "serde")]
 impl<K, V, R> Serialize for LiteMap<K, V, R>
 where
     K: Serialize,
@@ -28,8 +28,7 @@ where
         // as a vec of tuples instead
         if serializer.is_human_readable() {
             if let Some((ref k, _)) = self.values.lm_get(0) {
-                let json = serde_json::json!(k);
-                if !json.is_string() && !json.is_number() {
+                if !super::serde_helpers::is_num_or_string(k) {
                     return self.values.serialize(serializer);
                 }
                 // continue to regular serialization
@@ -65,7 +64,7 @@ impl<'de, K, V, R> Visitor<'de> for LiteMapVisitor<K, V, R>
 where
     K: Deserialize<'de> + Ord,
     V: Deserialize<'de>,
-    R: Store<K, V>,
+    R: StoreMut<K, V> + StoreFromIterable<K, V>,
 {
     type Value = LiteMap<K, V, R>;
 
@@ -128,7 +127,7 @@ impl<'de, K, V, R> Deserialize<'de> for LiteMap<K, V, R>
 where
     K: Ord + Deserialize<'de>,
     V: Deserialize<'de>,
-    R: Store<K, V>,
+    R: StoreMut<K, V> + StoreFromIterable<K, V>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

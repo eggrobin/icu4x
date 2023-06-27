@@ -3,15 +3,19 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 use displaydoc::Display;
+use icu_provider::DataError;
+use tinystr::{tinystr, TinyStr16, TinyStr4};
+use writeable::Writeable;
 
 #[cfg(feature = "std")]
-impl std::error::Error for DateTimeError {}
+impl std::error::Error for CalendarError {}
 
-/// A list of possible error outcomes for working with various inputs to DateTime inputs
-/// and operations.
-#[derive(Display, Debug, Copy, Clone)]
+/// A list of error outcomes for various operations in this module.
+///
+/// Re-exported as [`Error`](crate::Error).
+#[derive(Display, Debug, Copy, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum DateTimeError {
+pub enum CalendarError {
     /// An input could not be parsed.
     #[displaydoc("Could not parse as integer")]
     Parse,
@@ -31,19 +35,76 @@ pub enum DateTimeError {
         /// The minimum value
         min: isize,
     },
-    /// The time zone offset was invalid.
-    #[displaydoc("Failed to parse time-zone offset")]
-    InvalidTimeZoneOffset,
     /// Out of range
     // TODO(Manishearth) turn this into a proper variant
     OutOfRange,
-    /// An input was missing.
+    /// Unknown era
+    #[displaydoc("No era named {0} for calendar {1}")]
+    UnknownEra(TinyStr16, &'static str),
+    /// Unknown month code for a given calendar
+    #[displaydoc("No month code named {0} for calendar {1}")]
+    UnknownMonthCode(TinyStr4, &'static str),
+    /// Missing required input field for formatting
     #[displaydoc("No value for {0}")]
     MissingInput(&'static str),
+    /// No support for a given calendar in AnyCalendar
+    #[displaydoc("AnyCalendar does not support calendar {0}")]
+    UnknownAnyCalendarKind(TinyStr16),
+    /// An operation required a calendar but a calendar was not provided.
+    #[displaydoc("An operation required a calendar but a calendar was not provided")]
+    MissingCalendar,
+    /// An error originating inside of the [data provider](icu_provider).
+    #[displaydoc("{0}")]
+    Data(DataError),
 }
 
-impl From<core::num::ParseIntError> for DateTimeError {
+/// A list of error outcomes for exceeding location bounds
+#[derive(Display, Debug, Copy, Clone, PartialEq)]
+pub enum LocationError {
+    /// Latitude value was out of bounds
+    #[displaydoc("Latitude {0} outside bounds of -90 to 90")]
+    LatitudeOutOfBounds(f64),
+
+    /// Longitude value was out of bounds
+    #[displaydoc("Longitude {0} outside bounds of -180 to 180")]
+    LongitudeOutOfBounds(f64),
+}
+
+impl From<core::num::ParseIntError> for CalendarError {
     fn from(_: core::num::ParseIntError) -> Self {
-        DateTimeError::Parse
+        CalendarError::Parse
+    }
+}
+
+impl From<DataError> for CalendarError {
+    fn from(e: DataError) -> Self {
+        CalendarError::Data(e)
+    }
+}
+
+impl CalendarError {
+    /// Create an error when an [`AnyCalendarKind`] is expected but not available.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use icu_calendar::AnyCalendarKind;
+    /// use icu_calendar::CalendarError;
+    ///
+    /// let cal_str = "maori";
+    ///
+    /// AnyCalendarKind::get_for_bcp47_string(cal_str)
+    ///     .ok_or_else(|| CalendarError::unknown_any_calendar_kind(cal_str))
+    ///     .expect_err("Māori calendar is not yet supported");
+    /// ```
+    ///
+    /// [`AnyCalendarKind`]: crate::AnyCalendarKind
+    pub fn unknown_any_calendar_kind(description: impl Writeable) -> Self {
+        let tiny = description
+            .write_to_string()
+            .get(0..16)
+            .and_then(|x| TinyStr16::from_str(x).ok())
+            .unwrap_or(tinystr!(16, "invalid"));
+        Self::UnknownAnyCalendarKind(tiny)
     }
 }

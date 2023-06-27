@@ -2,58 +2,59 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-//! Utilities for dumping data to an ICU4X filesystem tree.
+//! Data exporter for [`BlobDataProvider`](crate::BlobDataProvider).
 //!
-//! The `export` feature enables you to pull all data from some other data provider and persist it
-//! in a blob of data to be read by [`StaticDataProvider`](crate::StaticDataProvider) at runtime.
-//!
-//! For a command-line user interface, see the `icu_datagen` crate.
+//! This module can be used as a target for the `icu_datagen` crate.
 //!
 //! # Examples
 //!
 //! ```
-//! use icu_provider::prelude::*;
-//! use icu_provider::export::DataExporter;
-//! use icu_provider::hello_world::*;
-//! use icu_provider_blob::BlobDataProvider;
-//! use icu_provider_blob::export::BlobExporter;
-//! use std::borrow::Cow;
-//! use std::io::Read;
-//! use std::rc::Rc;
+//! use icu_datagen::prelude::*;
+//! use icu_provider_blob::export::*;
 //!
-//! let mut buffer: Vec<u8> = Vec::new();
+//! let mut blob: Vec<u8> = Vec::new();
 //!
-//! let payload = DataPayload::<HelloWorldV1Marker>::from_owned(
-//!     HelloWorldV1 { message: Cow::Borrowed("Hi") }
-//! );
+//! // Set up the exporter
+//! let mut exporter = BlobExporter::new_with_sink(Box::new(&mut blob));
 //!
 //! // Export something
-//! {
-//!     let mut exporter = BlobExporter::new_with_sink(Box::new(&mut buffer));
-//!     exporter.put_payload(
-//!         HelloWorldV1Marker::KEY,
-//!         Default::default(),
-//!         payload.clone().into_serializable(),
-//!     ).expect("Should successfully export");
-//!     exporter.close().expect("Should successfully dump to buffer");
-//! }
+//! DatagenProvider::default()
+//!     .export(
+//!         [icu_provider::hello_world::HelloWorldV1Marker::KEY].into_iter().collect(),
+//!         exporter
+//!     ).unwrap();
 //!
-//! // Create a blob provider reading from the buffer
-//! let provider = BlobDataProvider::new_from_rc_blob(buffer.into())
-//!     .expect("Should successfully read from buffer");
+//! // communicate the blob to the client application (network, disk, etc.)
+//! ```
 //!
-//! // Read the key from the filesystem and ensure it is as expected
-//! let req = DataRequest {
-//!     options: Default::default(),
-//!     metadata: Default::default(),
-//! };
-//! let response: DataPayload<HelloWorldV1Marker> =
-//!     provider.load_resource(&req).unwrap().take_payload().unwrap();
+//! The resulting blob can now be used like this:
 //!
-//! assert_eq!(
-//!     response.get(),
-//!     payload.get(),
-//! );
+//! ```
+//! use icu_locid::langid;
+//! use icu_provider::hello_world::*;
+//! use icu_provider::prelude::*;
+//! use icu_provider_blob::BlobDataProvider;
+//!
+//! // obtain the data blob
+//! # let blob = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/hello_world.postcard")).unwrap();
+//!
+//! // Create a provider reading from the blob
+//! let provider =
+//!     BlobDataProvider::try_new_from_blob(blob.into_boxed_slice())
+//!         .expect("Should successfully read from blob");
+//!
+//! // Read the key from the blob
+//! let response: DataPayload<HelloWorldV1Marker> = provider
+//!     .as_deserializing()
+//!     .load(DataRequest {
+//!         locale: &langid!("en").into(),
+//!         metadata: Default::default(),
+//!     })
+//!     .unwrap()
+//!     .take_payload()
+//!     .unwrap();
+//!
+//! assert_eq!(response.get().message, "Hello World");
 //! ```
 
 mod blob_exporter;

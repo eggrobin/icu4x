@@ -15,16 +15,16 @@
 //! For example, if your regular stack type is:
 //!
 //! ```rust
-//! use zerovec::ZeroVec;
-//! use zerovec::ule::*;
 //! use zerofrom::ZeroFrom;
+//! use zerovec::ule::*;
+//! use zerovec::ZeroVec;
 //!
 //! #[derive(serde::Serialize, serde::Deserialize)]
 //! struct Foo<'a> {
-//!    field1: char,
-//!    field2: u32,
-//!    #[serde(borrow)]
-//!    field3: ZeroVec<'a, u32>   
+//!     field1: char,
+//!     field2: u32,
+//!     #[serde(borrow)]
+//!     field3: ZeroVec<'a, u32>,
 //! }
 //! ```
 //!
@@ -40,12 +40,12 @@
 //! use core::mem;
 //!
 //! # #[derive(serde::Serialize, serde::Deserialize)]
-//!# struct Foo<'a> {
-//!#    field1: char,
-//!#    field2: u32,
-//!#    #[serde(borrow)]
-//!#    field3: ZeroVec<'a, u32>   
-//!# }
+//! # struct Foo<'a> {
+//! #    field1: char,
+//! #    field2: u32,
+//! #    #[serde(borrow)]
+//! #    field3: ZeroVec<'a, u32>   
+//! # }
 //!
 //! // Must be repr(packed) for safety of VarULE!
 //! // Must also only contain ULE types
@@ -69,16 +69,16 @@
 //! unsafe impl VarULE for FooULE {
 //!     fn validate_byte_slice(bytes: &[u8]) -> Result<(), ZeroVecError> {
 //!         // validate each field
-//!         <char as AsULE>::ULE::validate_byte_slice(&bytes[0..4]).map_err(|_| ZeroVecError::parse::<Self>())?;
-//!         <char as AsULE>::ULE::validate_byte_slice(&bytes[4..8]).map_err(|_| ZeroVecError::parse::<Self>())?;
-//!         let _ = ZeroVec::<u32>::parse_byte_slice(&bytes[8..]).map_err(|_| ZeroVecError::parse::<Self>())?;
+//!         <char as AsULE>::ULE::validate_byte_slice(&bytes[0..3]).map_err(|_| ZeroVecError::parse::<Self>())?;
+//!         <u32 as AsULE>::ULE::validate_byte_slice(&bytes[3..7]).map_err(|_| ZeroVecError::parse::<Self>())?;
+//!         let _ = ZeroVec::<u32>::parse_byte_slice(&bytes[7..]).map_err(|_| ZeroVecError::parse::<Self>())?;
 //!         Ok(())
 //!     }
 //!     unsafe fn from_byte_slice_unchecked(bytes: &[u8]) -> &Self {
 //!         let ptr = bytes.as_ptr();
 //!         let len = bytes.len();
 //!         // subtract the length of the char and u32 to get the length of the array
-//!         let len_new = (len - 8) / 4;
+//!         let len_new = (len - 7) / 4;
 //!         // it's hard constructing custom DSTs, we fake a pointer/length construction
 //!         // eventually we can use the Pointer::Metadata APIs when they stabilize
 //!         let fake_slice = core::ptr::slice_from_raw_parts(ptr as *const <u32 as AsULE>::ULE, len_new);
@@ -132,7 +132,7 @@
 //!     let mut foos = vec![Foo {field1: 'u', field2: 983, field3: ZeroVec::alloc_from_slice(&[1212,2309,500,7000])},
 //!                         Foo {field1: 'l', field2: 1010, field3: ZeroVec::alloc_from_slice(&[1932, 0, 8888, 91237])}];
 //!
-//!     let vzv = VarZeroVec::from(&foos);
+//!     let vzv = VarZeroVec::<_>::from(&foos);
 //!
 //!     assert_eq!(char::from_unaligned(vzv.get(0).unwrap().field1), 'u');
 //!     assert_eq!(u32::from_unaligned(vzv.get(0).unwrap().field2), 983);

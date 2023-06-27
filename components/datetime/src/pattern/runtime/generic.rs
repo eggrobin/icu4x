@@ -8,12 +8,17 @@ use super::{
     Pattern,
 };
 use alloc::vec::Vec;
-use core::{fmt, str::FromStr};
-use icu_provider::{yoke, zerofrom};
+use core::str::FromStr;
+use icu_provider::prelude::*;
 use zerovec::ZeroVec;
 
 #[derive(Debug, PartialEq, Clone, yoke::Yokeable, zerofrom::ZeroFrom)]
 #[allow(clippy::exhaustive_structs)] // this type is stable
+#[cfg_attr(
+    feature = "datagen",
+    derive(databake::Bake),
+    databake(path = icu_datetime::pattern::runtime),
+)]
 pub struct GenericPattern<'data> {
     pub items: ZeroVec<'data, GenericPatternItem>,
 }
@@ -27,13 +32,12 @@ impl<'data> GenericPattern<'data> {
     /// ```
     /// use icu_datetime::pattern::runtime::{GenericPattern, Pattern};
     ///
-    /// let date: Pattern = "Y-m-d".parse()
-    ///         .expect("Failed to parse pattern");
-    /// let time: Pattern = "HH:mm".parse()
-    ///         .expect("Failed to parse pattern");
+    /// let date: Pattern = "Y-m-d".parse().expect("Failed to parse pattern");
+    /// let time: Pattern = "HH:mm".parse().expect("Failed to parse pattern");
     ///
-    /// let glue: GenericPattern = "{1} 'at' {0}".parse()
-    ///         .expect("Failed to parse generic pattern");
+    /// let glue: GenericPattern = "{1} 'at' {0}"
+    ///     .parse()
+    ///     .expect("Failed to parse generic pattern");
     /// assert_eq!(
     ///     glue.combined(date, time)
     ///         .expect("Failed to combine patterns")
@@ -58,11 +62,10 @@ impl<'data> GenericPattern<'data> {
                     result.extend(date.items.iter());
                 }
                 GenericPatternItem::Placeholder(idx) => {
-                    #[allow(clippy::expect_used)]
-                    // TODO(#1668) Clippy exceptions need docs or fixing.
-                    let idx = char::from_digit(idx as u32, 10)
-                        .expect("Failed to convert placeholder idx to char");
-                    return Err(PatternError::UnknownSubstitution(idx));
+                    #[allow(clippy::unwrap_used)] // idx is a valid base-10 digit
+                    return Err(PatternError::UnknownSubstitution(
+                        char::from_digit(idx as u32, 10).unwrap(),
+                    ));
                 }
                 GenericPatternItem::Literal(ch) => result.push(PatternItem::Literal(ch)),
             }
@@ -96,9 +99,10 @@ impl From<&GenericPattern<'_>> for reference::GenericPattern {
     }
 }
 
-impl fmt::Display for GenericPattern<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        let reference = crate::pattern::reference::GenericPattern::from(self);
+#[cfg(feature = "datagen")]
+impl core::fmt::Display for GenericPattern<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+        let reference = reference::GenericPattern::from(self);
         reference.fmt(formatter)
     }
 }
@@ -107,12 +111,13 @@ impl FromStr for GenericPattern<'_> {
     type Err = PatternError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let reference = crate::pattern::reference::GenericPattern::from_str(s)?;
+        let reference = reference::GenericPattern::from_str(s)?;
         Ok(Self::from(&reference))
     }
 }
 
 #[cfg(test)]
+#[cfg(feature = "datagen")]
 mod test {
     use super::*;
 

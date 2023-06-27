@@ -8,11 +8,16 @@ mod borrowed;
 mod kv;
 #[allow(clippy::module_inception)] // module is purely internal
 pub(crate) mod map;
+mod vecs;
+
+#[cfg(feature = "databake")]
+mod databake;
 #[cfg(feature = "serde")]
 mod serde;
-mod vecs;
+#[cfg(feature = "serde")]
+mod serde_helpers;
 
 pub use crate::ZeroMap;
 pub use borrowed::ZeroMapBorrowed;
 pub use kv::ZeroMapKV;
-pub use vecs::{BorrowedZeroVecLike, MutableZeroVecLike, ZeroVecLike};
+pub use vecs::{MutableZeroVecLike, ZeroVecLike};

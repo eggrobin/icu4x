@@ -4,21 +4,20 @@
 
 #[diplomat::bridge]
 pub mod ffi {
-    use core::str::FromStr;
+    use core::str::{self};
 
     use alloc::boxed::Box;
 
+    use fixed_decimal::FixedDecimal;
     use icu_plurals::{PluralCategory, PluralOperands, PluralRules};
 
     use crate::{locale::ffi::ICU4XLocale, provider::ffi::ICU4XDataProvider};
 
-    pub struct ICU4XCreatePluralRulesResult {
-        pub rules: Option<Box<ICU4XPluralRules>>,
-        pub success: bool,
-    }
+    use crate::errors::ffi::ICU4XError;
 
     /// FFI version of `PluralCategory`.
-    #[diplomat::rust_link(icu_plurals::PluralCategory, Enum)]
+    #[diplomat::rust_link(icu::plurals::PluralCategory, Enum)]
+    #[diplomat::enum_convert(PluralCategory)]
     pub enum ICU4XPluralCategory {
         Zero,
         One,
@@ -28,76 +27,61 @@ pub mod ffi {
         Other,
     }
 
+    impl ICU4XPluralCategory {
+        /// Construct from a string in the format
+        /// [specified in TR35](https://unicode.org/reports/tr35/tr35-numbers.html#Language_Plural_Rules)
+        #[diplomat::rust_link(icu::plurals::PluralCategory::get_for_cldr_string, FnInEnum)]
+        #[diplomat::rust_link(icu::plurals::PluralCategory::get_for_cldr_bytes, FnInEnum)]
+        pub fn get_for_cldr_string(s: &str) -> Result<ICU4XPluralCategory, ()> {
+            let s = s.as_bytes(); // #2520
+            PluralCategory::get_for_cldr_bytes(s)
+                .ok_or(())
+                .map(Into::into)
+        }
+    }
+
     /// FFI version of `PluralRules`.
-    #[diplomat::rust_link(icu_plurals::PluralRules, Struct)]
+    #[diplomat::rust_link(icu::plurals::PluralRules, Struct)]
     #[diplomat::opaque]
     pub struct ICU4XPluralRules(PluralRules);
 
     impl ICU4XPluralRules {
-        /// FFI version of `PluralRules::try_new_cardinal()`.
-        #[diplomat::rust_link(icu_plurals::PluralRules::try_new, FnInStruct)]
-        pub fn try_new_cardinal(
-            locale: &ICU4XLocale,
+        /// Construct an [`ICU4XPluralRules`] for the given locale, for cardinal numbers
+        #[diplomat::rust_link(icu::plurals::PluralRules::try_new_cardinal_unstable, FnInStruct)]
+        #[diplomat::rust_link(icu::plurals::PluralRules::try_new_unstable, FnInStruct, hidden)]
+        #[diplomat::rust_link(icu::plurals::PluralRuleType, Enum, hidden)]
+        pub fn create_cardinal(
             provider: &ICU4XDataProvider,
-        ) -> ICU4XCreatePluralRulesResult {
-            use icu_provider::serde::AsDeserializingBufferProvider;
-            let provider = provider.0.as_deserializing();
-            PluralRules::try_new_cardinal(locale.0.as_ref().clone(), &provider)
-                .ok()
-                .map(|r| ICU4XCreatePluralRulesResult {
-                    rules: Some(Box::new(ICU4XPluralRules(r))),
-                    success: true,
-                })
-                .unwrap_or(ICU4XCreatePluralRulesResult {
-                    rules: None,
-                    success: false,
-                })
-        }
-
-        /// FFI version of `PluralRules::try_new_ordinal()`.
-        #[diplomat::rust_link(icu_plurals::PluralRules::try_new, FnInStruct)]
-        pub fn try_new_ordinal(
             locale: &ICU4XLocale,
+        ) -> Result<Box<ICU4XPluralRules>, ICU4XError> {
+            let locale = locale.to_datalocale();
+            Ok(Box::new(ICU4XPluralRules(
+                PluralRules::try_new_cardinal_unstable(&provider.0, &locale)?,
+            )))
+        }
+
+        /// Construct an [`ICU4XPluralRules`] for the given locale, for ordinal numbers
+        #[diplomat::rust_link(icu::plurals::PluralRules::try_new_ordinal_unstable, FnInStruct)]
+        #[diplomat::rust_link(icu::plurals::PluralRules::try_new_unstable, FnInStruct, hidden)]
+        #[diplomat::rust_link(icu::plurals::PluralRuleType, Enum, hidden)]
+        pub fn create_ordinal(
             provider: &ICU4XDataProvider,
-        ) -> ICU4XCreatePluralRulesResult {
-            use icu_provider::serde::AsDeserializingBufferProvider;
-            let provider = provider.0.as_deserializing();
-            PluralRules::try_new_ordinal(locale.0.as_ref().clone(), &provider)
-                .ok()
-                .map(|r| ICU4XCreatePluralRulesResult {
-                    rules: Some(Box::new(ICU4XPluralRules(r))),
-                    success: true,
-                })
-                .unwrap_or(ICU4XCreatePluralRulesResult {
-                    rules: None,
-                    success: false,
-                })
+            locale: &ICU4XLocale,
+        ) -> Result<Box<ICU4XPluralRules>, ICU4XError> {
+            let locale = locale.to_datalocale();
+            Ok(Box::new(ICU4XPluralRules(
+                PluralRules::try_new_ordinal_unstable(&provider.0, &locale)?,
+            )))
         }
 
-        /// FFI version of `PluralRules::select()`.
-        #[diplomat::rust_link(icu_plurals::PluralRules::select, FnInStruct)]
-        pub fn select(&self, op: ICU4XPluralOperands) -> ICU4XPluralCategory {
-            let res = self.0.select(PluralOperands {
-                i: op.i,
-                v: op.v,
-                w: op.w,
-                f: op.f,
-                t: op.t,
-                c: op.c,
-            });
-
-            match res {
-                PluralCategory::Zero => ICU4XPluralCategory::Zero,
-                PluralCategory::One => ICU4XPluralCategory::One,
-                PluralCategory::Two => ICU4XPluralCategory::Two,
-                PluralCategory::Few => ICU4XPluralCategory::Few,
-                PluralCategory::Many => ICU4XPluralCategory::Many,
-                PluralCategory::Other => ICU4XPluralCategory::Other,
-            }
+        /// Get the category for a given number represented as operands
+        #[diplomat::rust_link(icu::plurals::PluralRules::category_for, FnInStruct)]
+        pub fn category_for(&self, op: &ICU4XPluralOperands) -> ICU4XPluralCategory {
+            self.0.category_for(op.0).into()
         }
 
-        /// FFI version of `PluralRules::categories()`.
-        #[diplomat::rust_link(icu_plurals::PluralRules::categories, FnInStruct)]
+        /// Get all of the categories needed in the current locale
+        #[diplomat::rust_link(icu::plurals::PluralRules::categories, FnInStruct)]
         pub fn categories(&self) -> ICU4XPluralCategories {
             self.0.categories().fold(
                 ICU4XPluralCategories {
@@ -123,52 +107,20 @@ pub mod ffi {
         }
     }
 
-    /// This is the result returned by `ICU4XPluralOperands::create()`
-    #[diplomat::rust_link(icu_plurals::PluralOperands, Struct)]
-    pub struct ICU4XCreatePluralOperandsResult {
-        pub operands: ICU4XPluralOperands,
-        pub success: bool,
-    }
-
     /// FFI version of `PluralOperands`.
-    #[diplomat::rust_link(icu_plurals::PluralOperands, Struct)]
-    pub struct ICU4XPluralOperands {
-        pub i: u64,
-        pub v: usize,
-        pub w: usize,
-        pub f: u64,
-        pub t: u64,
-        pub c: usize,
-    }
+    #[diplomat::opaque]
+    #[diplomat::rust_link(icu::plurals::PluralOperands, Struct)]
+    pub struct ICU4XPluralOperands(pub icu_plurals::PluralOperands);
 
     impl ICU4XPluralOperands {
-        /// FFI version of `PluralOperands::from_str()`.
-        #[diplomat::rust_link(icu_plurals::PluralOperands::from_str, FnInStruct)]
-        pub fn create(s: &str) -> ICU4XCreatePluralOperandsResult {
-            PluralOperands::from_str(s)
-                .ok()
-                .map(|ops| ICU4XCreatePluralOperandsResult {
-                    operands: ICU4XPluralOperands {
-                        i: ops.i,
-                        v: ops.v,
-                        w: ops.w,
-                        f: ops.f,
-                        t: ops.t,
-                        c: ops.c,
-                    },
-                    success: true,
-                })
-                .unwrap_or(ICU4XCreatePluralOperandsResult {
-                    operands: ICU4XPluralOperands {
-                        i: 0,
-                        v: 0,
-                        w: 0,
-                        f: 0,
-                        t: 0,
-                        c: 0,
-                    },
-                    success: false,
-                })
+        /// Construct for a given string representing a number
+        #[diplomat::rust_link(icu::plurals::PluralOperands::from_str, FnInStruct)]
+        pub fn create_from_string(s: &str) -> Result<Box<ICU4XPluralOperands>, ICU4XError> {
+            let s = s.as_bytes(); // #2520
+            Ok(Box::new(ICU4XPluralOperands(PluralOperands::from(
+                // XXX should this have its own errors?
+                &FixedDecimal::try_from(s).map_err(|_| ICU4XError::PluralsParserError)?,
+            ))))
         }
     }
 

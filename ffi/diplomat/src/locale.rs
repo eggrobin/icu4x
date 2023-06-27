@@ -4,46 +4,38 @@
 
 #[diplomat::bridge]
 pub mod ffi {
+    use crate::errors::ffi::ICU4XError;
     use alloc::boxed::Box;
-    use core::str::FromStr;
-    use diplomat_runtime::DiplomatResult;
+    use core::str;
+    use diplomat_runtime::DiplomatWriteable;
     use icu_locid::extensions::unicode::Key;
     use icu_locid::subtags::{Language, Region, Script};
     use icu_locid::Locale;
-
     use writeable::Writeable;
+
+    use crate::common::ffi::ICU4XOrdering;
 
     #[diplomat::opaque]
     /// An ICU4X Locale, capable of representing strings like `"en-US"`.
     #[diplomat::rust_link(icu::locid::Locale, Struct)]
     pub struct ICU4XLocale(pub Locale);
 
-    pub enum ICU4XLocaleError {
-        Undefined,
-        Error,
-    }
-
     impl ICU4XLocale {
         /// Construct an [`ICU4XLocale`] from an locale identifier.
-        #[diplomat::rust_link(icu::locid::Locale::from_bytes, FnInStruct)]
-        pub fn create(name: &str) -> Option<Box<ICU4XLocale>> {
-            Locale::from_str(name)
-                .ok()
-                .map(|l| Box::new(ICU4XLocale(l)))
-        }
-
-        /// Construct an [`ICU4XLocale`] for the English language.
-        pub fn create_en() -> Box<ICU4XLocale> {
-            Box::new(ICU4XLocale(icu_locid::locale!("en")))
-        }
-
-        /// Construct an [`ICU4XLocale`] for the Bangla language.
-        pub fn create_bn() -> Box<ICU4XLocale> {
-            Box::new(ICU4XLocale(icu_locid::locale!("bn")))
+        ///
+        /// This will run the complete locale parsing algorithm. If code size and
+        /// performance are critical and the locale is of a known shape (such as
+        /// `aa-BB`) use `create_und`, `set_language`, `set_script`, and `set_region`.
+        #[diplomat::rust_link(icu::locid::Locale::try_from_bytes, FnInStruct)]
+        #[diplomat::rust_link(icu::locid::Locale::from_str, FnInStruct, hidden)]
+        pub fn create_from_string(name: &str) -> Result<Box<ICU4XLocale>, ICU4XError> {
+            let name = name.as_bytes(); // #2520
+            Ok(Box::new(ICU4XLocale(Locale::try_from_bytes(name)?)))
         }
 
         /// Construct a default undefined [`ICU4XLocale`] "und".
-        pub fn und() -> Box<ICU4XLocale> {
+        #[diplomat::rust_link(icu::locid::Locale::UND, AssociatedConstantInStruct)]
+        pub fn create_und() -> Box<ICU4XLocale> {
             Box::new(ICU4XLocale(Locale::UND))
         }
 
@@ -60,16 +52,9 @@ pub mod ffi {
         pub fn basename(
             &self,
             write: &mut diplomat_runtime::DiplomatWriteable,
-        ) -> DiplomatResult<(), ICU4XLocaleError> {
-            #[allow(unused_variables)]
-            let result = self
-                .0
-                .id
-                .write_to(write)
-                .map_err(|_| ICU4XLocaleError::Error)
-                .into();
-            write.flush();
-            result
+        ) -> Result<(), ICU4XError> {
+            self.0.id.write_to(write)?;
+            Ok(())
         }
 
         /// Write a string representation of the unicode extension to `write`
@@ -78,22 +63,16 @@ pub mod ffi {
             &self,
             bytes: &str,
             write: &mut diplomat_runtime::DiplomatWriteable,
-        ) -> DiplomatResult<(), ICU4XLocaleError> {
-            if let Ok(key) = Key::from_bytes(bytes.as_bytes()) {
-                if let Some(value) = self.0.extensions.unicode.keywords.get(&key) {
-                    #[allow(unused_variables)]
-                    let result = value
-                        .write_to(write)
-                        .map_err(|_| ICU4XLocaleError::Error)
-                        .into();
-                    write.flush();
-                    result
-                } else {
-                    Result::Err(ICU4XLocaleError::Undefined).into()
-                }
-            } else {
-                Result::Err(ICU4XLocaleError::Error).into()
-            }
+        ) -> Result<(), ICU4XError> {
+            let bytes = bytes.as_bytes(); // #2520
+            self.0
+                .extensions
+                .unicode
+                .keywords
+                .get(&Key::try_from_bytes(bytes)?)
+                .ok_or(ICU4XError::LocaleUndefinedSubtagError)?
+                .write_to(write)?;
+            Ok(())
         }
 
         /// Write a string representation of [`ICU4XLocale`] language to `write`
@@ -101,34 +80,21 @@ pub mod ffi {
         pub fn language(
             &self,
             write: &mut diplomat_runtime::DiplomatWriteable,
-        ) -> DiplomatResult<(), ICU4XLocaleError> {
-            #[allow(unused_variables)]
-            let result = self
-                .0
-                .id
-                .language
-                .write_to(write)
-                .map_err(|_| ICU4XLocaleError::Error)
-                .into();
-            write.flush();
-            result
+        ) -> Result<(), ICU4XError> {
+            self.0.id.language.write_to(write)?;
+            Ok(())
         }
 
         /// Set the language part of the [`ICU4XLocale`].
-        #[diplomat::rust_link(icu::locid::Locale::from_bytes, FnInStruct)]
-        pub fn set_language(&mut self, bytes: &str) -> DiplomatResult<(), ICU4XLocaleError> {
-            if bytes.is_empty() {
-                self.0.id.language = Language::UND;
-                return Ok(()).into();
-            }
-            match Language::from_bytes(bytes.as_bytes()) {
-                Ok(language) => {
-                    self.0.id.language = language;
-                    Ok(())
-                }
-                Err(_) => Err(ICU4XLocaleError::Error),
-            }
-            .into()
+        #[diplomat::rust_link(icu::locid::Locale::try_from_bytes, FnInStruct)]
+        pub fn set_language(&mut self, bytes: &str) -> Result<(), ICU4XError> {
+            let bytes = bytes.as_bytes(); // #2520
+            self.0.id.language = if bytes.is_empty() {
+                Language::UND
+            } else {
+                Language::try_from_bytes(bytes)?
+            };
+            Ok(())
         }
 
         /// Write a string representation of [`ICU4XLocale`] region to `write`
@@ -136,35 +102,25 @@ pub mod ffi {
         pub fn region(
             &self,
             write: &mut diplomat_runtime::DiplomatWriteable,
-        ) -> DiplomatResult<(), ICU4XLocaleError> {
+        ) -> Result<(), ICU4XError> {
             if let Some(region) = self.0.id.region {
-                #[allow(unused_variables)]
-                let result = region
-                    .write_to(write)
-                    .map_err(|_| ICU4XLocaleError::Error)
-                    .into();
-                write.flush();
-                result
+                region.write_to(write)?;
+                Ok(())
             } else {
-                Result::Err(ICU4XLocaleError::Undefined).into()
+                Err(ICU4XError::LocaleUndefinedSubtagError)
             }
         }
 
         /// Set the region part of the [`ICU4XLocale`].
-        #[diplomat::rust_link(icu::locid::Locale::from_bytes, FnInStruct)]
-        pub fn set_region(&mut self, bytes: &str) -> DiplomatResult<(), ICU4XLocaleError> {
-            if bytes.is_empty() {
-                self.0.id.region = None;
-                return Ok(()).into();
-            }
-            match Region::from_bytes(bytes.as_bytes()) {
-                Ok(region) => {
-                    self.0.id.region = Some(region);
-                    Ok(())
-                }
-                Err(_) => Err(ICU4XLocaleError::Error),
-            }
-            .into()
+        #[diplomat::rust_link(icu::locid::Locale::try_from_bytes, FnInStruct)]
+        pub fn set_region(&mut self, bytes: &str) -> Result<(), ICU4XError> {
+            let bytes = bytes.as_bytes(); // #2520
+            self.0.id.region = if bytes.is_empty() {
+                None
+            } else {
+                Some(Region::try_from_bytes(bytes)?)
+            };
+            Ok(())
         }
 
         /// Write a string representation of [`ICU4XLocale`] script to `write`
@@ -172,51 +128,85 @@ pub mod ffi {
         pub fn script(
             &self,
             write: &mut diplomat_runtime::DiplomatWriteable,
-        ) -> DiplomatResult<(), ICU4XLocaleError> {
+        ) -> Result<(), ICU4XError> {
             if let Some(script) = self.0.id.script {
-                #[allow(unused_variables)]
-                let result = script
-                    .write_to(write)
-                    .map_err(|_| ICU4XLocaleError::Error)
-                    .into();
-                write.flush();
-                result
+                script.write_to(write)?;
+                Ok(())
             } else {
-                Result::Err(ICU4XLocaleError::Undefined).into()
+                Err(ICU4XError::LocaleUndefinedSubtagError)
             }
         }
 
         /// Set the script part of the [`ICU4XLocale`]. Pass an empty string to remove the script.
-        #[diplomat::rust_link(icu::locid::Locale::from_bytes, FnInStruct)]
-        pub fn set_script(&mut self, bytes: &str) -> DiplomatResult<(), ICU4XLocaleError> {
-            if bytes.is_empty() {
-                self.0.id.script = None;
-                return Ok(()).into();
-            }
-            match Script::from_bytes(bytes.as_bytes()) {
-                Ok(script) => {
-                    self.0.id.script = Some(script);
-                    Ok(())
-                }
-                Err(_) => Err(ICU4XLocaleError::Error),
-            }
-            .into()
+        #[diplomat::rust_link(icu::locid::Locale::try_from_bytes, FnInStruct)]
+        pub fn set_script(&mut self, bytes: &str) -> Result<(), ICU4XError> {
+            let bytes = bytes.as_bytes(); // #2520
+            self.0.id.script = if bytes.is_empty() {
+                None
+            } else {
+                Some(Script::try_from_bytes(bytes)?)
+            };
+            Ok(())
         }
 
+        /// Best effort locale canonicalizer that doesn't need any data
+        ///
+        /// Use ICU4XLocaleCanonicalizer for better control and functionality
+        #[diplomat::rust_link(icu::locid::Locale::canonicalize, FnInStruct)]
+        pub fn canonicalize(bytes: &str, write: &mut DiplomatWriteable) -> Result<(), ICU4XError> {
+            let bytes = bytes.as_bytes(); // #2520
+            Locale::canonicalize(bytes)?.write_to(write)?;
+            Ok(())
+        }
         /// Write a string representation of [`ICU4XLocale`] to `write`
-        #[diplomat::rust_link(icu::locid::Locale, Struct)]
-        pub fn tostring(
+        #[diplomat::rust_link(icu::locid::Locale::write_to, FnInStruct)]
+        pub fn to_string(
             &self,
             write: &mut diplomat_runtime::DiplomatWriteable,
-        ) -> DiplomatResult<(), ICU4XLocaleError> {
-            #[allow(unused_variables)]
-            let result = self
-                .0
-                .write_to(write)
-                .map_err(|_| ICU4XLocaleError::Error)
-                .into();
-            write.flush();
-            result
+        ) -> Result<(), ICU4XError> {
+            self.0.write_to(write)?;
+            Ok(())
         }
+
+        #[diplomat::rust_link(icu::locid::Locale::normalizing_eq, FnInStruct)]
+        pub fn normalizing_eq(&self, other: &str) -> bool {
+            let other = other.as_bytes(); // #2520
+            if let Ok(other) = str::from_utf8(other) {
+                self.0.normalizing_eq(other)
+            } else {
+                // invalid UTF8 won't be allowed in locales anyway
+                false
+            }
+        }
+
+        #[diplomat::rust_link(icu::locid::Locale::strict_cmp, FnInStruct)]
+        pub fn strict_cmp(&self, other: &str) -> ICU4XOrdering {
+            let other = other.as_bytes(); // #2520
+            self.0.strict_cmp(other).into()
+        }
+
+        /// Construct an [`ICU4XLocale`] for the English language.
+        ///
+        /// This convenience constructor is intended for testing only
+        /// and requires the `provider_test` feature.
+        #[cfg(feature = "provider_test")]
+        pub fn create_en() -> Box<ICU4XLocale> {
+            Box::new(ICU4XLocale(icu_locid::locale!("en")))
+        }
+
+        /// Construct an [`ICU4XLocale`] for the Bangla language.
+        ///
+        /// This convenience constructor is intended for testing only
+        /// and requires the `provider_test` feature.
+        #[cfg(feature = "provider_test")]
+        pub fn create_bn() -> Box<ICU4XLocale> {
+            Box::new(ICU4XLocale(icu_locid::locale!("bn")))
+        }
+    }
+}
+
+impl ffi::ICU4XLocale {
+    pub fn to_datalocale(&self) -> icu_provider::DataLocale {
+        (&self.0).into()
     }
 }

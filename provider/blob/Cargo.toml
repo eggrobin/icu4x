@@ -5,12 +5,14 @@
 [package]
 name = "icu_provider_blob"
 description = "ICU4X data provider that reads from blobs in memory"
-version = "0.5.0"
+version = "1.2.0"
+rust-version = "1.61.0"
 authors = ["The ICU4X Project Developers"]
-edition = "2018"
+edition = "2021"
 readme = "README.md"
 repository = "https://github.com/unicode-org/icu4x"
-license-file = "LICENSE"
+homepage = "https://icu4x.unicode.org"
+license = "Unicode-DFS-2016"
 categories = ["internationalization"]
 # Keep this in sync with other crates unless there are exceptions
 include = [
@@ -27,34 +29,25 @@ include = [
 all-features = true
 
 [dependencies]
-icu_provider = { version = "0.5", path = "../core", features = ["deserialize_postcard_07", "serde"] }
+icu_provider = { version = "1.2.0", path = "../core", features = ["deserialize_postcard_1", "serde"] }
+postcard = { version = "1.0.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", default-features = false, features = ["alloc"] }
-postcard = { version = "0.7.0", default-features = false }
-writeable = { version = "0.3", path = "../../utils/writeable" }
-yoke = { version = "0.5.0", path = "../../utils/yoke" }
-zerovec = { version = "0.6", path = "../../utils/zerovec", features = ["serde", "yoke"] }
+writeable = { version = "0.5.1", path = "../../utils/writeable" }
+yoke = { version = "0.7.1", path = "../../utils/yoke" }
+zerovec = { version = "0.9.4", path = "../../utils/zerovec", features = ["serde", "yoke"] }
 
-# For the export feature
 log = { version = "0.4", optional = true }
-litemap = { version = "0.3.0", path = "../../utils/litemap/", optional = true }
-erased-serde = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
-icu_locid = { version = "0.5", path = "../../components/locid", features = ["serde"] }
-icu = { version = "0.5", path = "../../components/icu" }
-icu_testdata = { version = "0.5", path = "../testdata", features = ["static"] }
-
-[lib]
-path = "src/lib.rs"
+icu_locid = { path = "../../components/locid", features = ["serde"] }
+icu_datagen = { path = "../datagen" }
 
 [features]
+std = ["icu_provider/std"]
 export = [
+    "icu_provider/datagen",
     "log",
     "postcard/alloc",
     "std", 
-    "litemap",
-    "icu_provider/datagen",
-    "zerovec/serde_serialize",
-    "erased-serde",
+    "zerovec/serde",
 ]
-std = ["icu_provider/std"]

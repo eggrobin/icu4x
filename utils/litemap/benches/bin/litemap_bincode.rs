@@ -43,13 +43,13 @@ const BINCODE: [u8; 278] = [
 /// Run this function to print new data to the console.
 #[allow(dead_code)]
 fn generate() {
-    let mut map = LiteMap::new();
+    let mut map = LiteMap::new_vec();
     for (lang, name) in DATA.iter() {
         map.try_append(lang, name).ok_or(()).unwrap_err();
     }
 
     let buf = bincode::serialize(&map).unwrap();
-    println!("{:?}", buf);
+    println!("{buf:?}");
 }
 
 #[no_mangle]

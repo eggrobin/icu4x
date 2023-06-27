@@ -9,11 +9,15 @@
 #include <optional>
 #include "diplomat_runtime.hpp"
 
-namespace capi {
 #include "ICU4XFixedDecimalSignDisplay.h"
-}
 
 
+
+/**
+ * ECMA-402 compatible sign display preference.
+ * 
+ * See the [Rust documentation for `SignDisplay`](https://docs.rs/fixed_decimal/latest/fixed_decimal/enum.SignDisplay.html) for more information.
+ */
 enum struct ICU4XFixedDecimalSignDisplay {
   Auto = 0,
   Never = 1,

@@ -6,25 +6,45 @@
 resolver = "2"
 members = [
     "components/calendar",
+    "components/calendar/data",
+    "components/collator",
+    "components/collator/data",
+    "components/collections",
+    "components/collections/codepointtrie_builder",
     "components/datetime",
+    "components/datetime/data",
     "components/decimal",
+    "components/decimal/data",
     "components/icu",
-    "components/icu4x",
     "components/list",
-    "components/locale_canonicalizer",
+    "components/list/data",
+    "components/locid_transform",
+    "components/locid_transform/data",
     "components/locid",
+    "components/normalizer",
+    "components/normalizer/data",
     "components/plurals",
+    "components/plurals/data",
     "components/properties",
+    "components/properties/data",
+    "components/segmenter",
+    "components/segmenter/data",
+    "components/timezone",
+    "components/timezone/data",
     "experimental/bies",
     "experimental/casemapping",
-    "experimental/char16trie",
-    "experimental/crabbake",
-    "experimental/crabbake/derive",
-    "experimental/segmenter",
-    "experimental/segmenter_lstm",
+    "experimental/casemapping/data",
+    "experimental/compactdecimal",
+    "experimental/compactdecimal/data",
+    "experimental/displaynames",
+    "experimental/displaynames/data",
+    "experimental/harfbuzz",
+    "experimental/ixdtf",
+    "experimental/relativetime",
+    "experimental/relativetime/data",
     "ffi/capi_cdylib",
-    "ffi/diplomat",
     "ffi/capi_staticlib",
+    "ffi/diplomat",
     "ffi/ecma402",
     "ffi/freertos",
     "provider/adapters",
@@ -33,17 +53,23 @@ members = [
     "provider/datagen",
     "provider/fs",
     "provider/macros",
+    "provider/repodata",
     "provider/testdata",
+    "tools/benchmark/binsize",
     "tools/benchmark/macros",
     "tools/benchmark/memory",
-    "tools/benchmark/binsize",
-    "utils/codepointtrie",
+    "tools/depcheck",
+    "tools/ffi_coverage",
+    "tools/testdata-scripts",
+    "tools/tutorials-test",
+    "utils/databake",
+    "utils/databake/derive",
     "utils/deduplicating_array",
     "utils/fixed_decimal",
     "utils/litemap",
     "utils/pattern",
     "utils/tinystr",
-    "utils/uniset",
+    "utils/tzif",
     "utils/writeable",
     "utils/yoke",
     "utils/yoke/derive",
@@ -52,12 +78,21 @@ members = [
     "utils/zerovec",
     "utils/zerovec/derive",
 ]
+# Note: Workspaces in subdirectories, such as docs/tutorials/crates, are
+# implicitly excluded from the main workspace.
+exclude = [
+    # GNaw needs to be run from outside the workspace for features to work
+    "ffi/gn",
+]
 
-# Enable lto for WASM.
-# 2020-10-30: This currently doesn't work in .cargo/config:
-#   error: options `-C embed-bitcode=no` and `-C lto` are incompatible
+# LTO is needed for WASM and other size-optimized builds,
+# and it improve the performance of benchmarks
 [profile.release]
 lto = true
+
+[profile.release-opt-size]
+inherits = "release"
+opt-level = "s"
 
 # Enable debug information specifically for memory profiling.
 # https://docs.rs/dhat/0.2.1/dhat/#configuration

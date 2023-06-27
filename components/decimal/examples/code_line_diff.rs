@@ -7,10 +7,8 @@
 
 #![no_main] // https://github.com/unicode-org/icu4x/issues/395
 
-use fixed_decimal::FixedDecimal;
-use icu_decimal::{options, FixedDecimalFormat};
+use icu_decimal::FixedDecimalFormatter;
 use icu_locid::locale;
-use writeable::Writeable;
 
 icu_benchmark_macros::static_setup!();
 
@@ -26,26 +24,16 @@ const LINES_REMOVED_ADDED: [(i64, i64); 5] = [
 fn main(_argc: isize, _argv: *const *const u8) -> isize {
     icu_benchmark_macros::main_setup!();
 
-    let provider = icu_testdata::get_static_provider();
+    let fdf = FixedDecimalFormatter::try_new(&locale!("bn").into(), Default::default())
+        .expect("locale should be present");
 
-    let mut options: options::FixedDecimalFormatOptions = Default::default();
-    options.sign_display = options::SignDisplay::ExceptZero;
-
-    let fdf = FixedDecimalFormat::try_new(locale!("bn"), &provider, options)
-        .expect("Failed to create FixedDecimalFormat instance.");
-
-    for line in LINES_REMOVED_ADDED.iter() {
-        let decimals: (FixedDecimal, FixedDecimal) = (line.0.into(), line.1.into());
-        let removed = fdf.format(&decimals.0);
-        let added = fdf.format(&decimals.1);
-        assert_ne!("", removed.write_to_string());
-        assert_ne!("", added.write_to_string());
+    for (removed, added) in LINES_REMOVED_ADDED {
+        let removed = fdf.format_to_string(&removed.into());
+        let added = fdf.format_to_string(&added.into());
+        assert!(!removed.is_empty());
+        assert!(!added.is_empty());
         #[cfg(debug_assertions)]
-        println!(
-            "Added/Removed: {}/{}",
-            removed.write_to_string(),
-            added.write_to_string()
-        );
+        println!("Added/Removed: {added}/{removed}",);
     }
 
     0

@@ -21,12 +21,13 @@ use core::ops::Range;
 /// Const-construct a ZeroSlice of u16:
 ///
 /// ```
-/// use zerovec::ZeroSlice;
 /// use zerovec::ule::AsULE;
+/// use zerovec::ZeroSlice;
 ///
-/// const DATA: &ZeroSlice<u16> = ZeroSlice::<u16>::from_ule_slice_const(
-///     &<u16 as AsULE>::ULE::from_array([211, 281, 421, 32973])
-/// );
+/// const DATA: &ZeroSlice<u16> =
+///     ZeroSlice::<u16>::from_ule_slice(&<u16 as AsULE>::ULE::from_array([
+///         211, 281, 421, 32973,
+///     ]));
 ///
 /// assert_eq!(DATA.get(1), Some(281));
 /// ```
@@ -37,13 +38,18 @@ impl<T> ZeroSlice<T>
 where
     T: AsULE,
 {
+    /// Returns an empty slice.
+    pub const fn new_empty() -> &'static Self {
+        Self::from_ule_slice(&[])
+    }
+
     /// Get this [`ZeroSlice`] as a borrowed [`ZeroVec`]
     ///
     /// [`ZeroSlice`] does not have most of the methods that [`ZeroVec`] does,
     /// so it is recommended to convert it to a [`ZeroVec`] before doing anything.
     #[inline]
-    pub fn as_zerovec(&self) -> ZeroVec<'_, T> {
-        ZeroVec::Borrowed(&self.0)
+    pub const fn as_zerovec(&self) -> ZeroVec<'_, T> {
+        ZeroVec::new_borrowed(&self.0)
     }
 
     /// Attempt to construct a `&ZeroSlice<T>` from a byte slice, returning an error
@@ -52,9 +58,27 @@ where
         T::ULE::parse_byte_slice(bytes).map(Self::from_ule_slice)
     }
 
-    /// Construct a `&ZeroSlice<T>` from a slice of ULEs
+    /// Uses a `&[u8]` buffer as a `ZeroVec<T>` without any verification.
+    ///
+    /// # Safety
+    ///
+    /// `bytes` need to be an output from [`ZeroSlice::as_bytes()`].
+    pub const unsafe fn from_bytes_unchecked(bytes: &[u8]) -> &Self {
+        // &[u8] and &[T::ULE] are the same slice with different length metadata.
+        Self::from_ule_slice(core::mem::transmute((
+            bytes.as_ptr(),
+            bytes.len() / core::mem::size_of::<T::ULE>(),
+        )))
+    }
+
+    /// Construct a `&ZeroSlice<T>` from a slice of ULEs.
+    ///
+    /// This function can be used for constructing ZeroVecs in a const context, avoiding
+    /// parsing checks.
+    ///
+    /// See [`ZeroSlice`] for an example.
     #[inline]
-    pub fn from_ule_slice(slice: &[T::ULE]) -> &Self {
+    pub const fn from_ule_slice(slice: &[T::ULE]) -> &Self {
         // This is safe because ZeroSlice is transparent over [T::ULE]
         // so &ZeroSlice<T> can be safely cast from &[T::ULE]
         unsafe { &*(slice as *const _ as *const Self) }
@@ -92,7 +116,7 @@ where
 
     /// Dereferences this slice as `&[T::ULE]`.
     #[inline]
-    pub fn as_ule_slice(&self) -> &[T::ULE] {
+    pub const fn as_ule_slice(&self) -> &[T::ULE] {
         &self.0
     }
 
@@ -101,11 +125,12 @@ where
     /// # Example
     ///
     /// ```
-    /// use zerovec::ZeroVec;
     /// use zerovec::ule::AsULE;
+    /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     ///
     /// assert_eq!(4, zerovec.len());
     /// assert_eq!(
@@ -114,7 +139,7 @@ where
     /// );
     /// ```
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.as_ule_slice().len()
     }
 
@@ -126,14 +151,16 @@ where
     /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     /// assert!(!zerovec.is_empty());
     ///
-    /// let emptyvec: ZeroVec<u16> = ZeroVec::parse_byte_slice(&[]).expect("infallible");
+    /// let emptyvec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(&[]).expect("infallible");
     /// assert!(emptyvec.is_empty());
     /// ```
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.as_ule_slice().is_empty()
     }
 }
@@ -150,7 +177,8 @@ where
     /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     ///
     /// assert_eq!(zerovec.get(2), Some(421));
     /// assert_eq!(zerovec.get(4), None);
@@ -163,6 +191,27 @@ where
             .map(T::from_unaligned)
     }
 
+    /// Gets the entire slice as an array of length `N`. Returns None if the slice
+    /// does not have exactly `N` elements.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use zerovec::ZeroVec;
+    ///
+    /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let array: [u16; 4] =
+    ///     zerovec.get_as_array().expect("should be 4 items in array");
+    ///
+    /// assert_eq!(array[2], 421);
+    /// ```
+    pub fn get_as_array<const N: usize>(&self) -> Option<[T; N]> {
+        let ule_array = <&[T::ULE; N]>::try_from(self.as_ule_slice()).ok()?;
+        Some(ule_array.map(|u| T::from_unaligned(u)))
+    }
+
     /// Gets a subslice of elements within a certain range. Returns None if the range
     /// is out of bounds of this `ZeroSlice`.
     ///
@@ -172,7 +221,8 @@ where
     /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     ///
     /// assert_eq!(
     ///     zerovec.get_subslice(1..3),
@@ -204,21 +254,21 @@ where
     /// ```
     /// use zerovec::ZeroSlice;
     ///
-    /// const bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// const zs_u16: &ZeroSlice<u16> = {
-    ///     match ZeroSlice::<u16>::try_from_bytes(bytes) {
+    /// const BYTES: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
+    /// const ZS_U16: &ZeroSlice<u16> = {
+    ///     match ZeroSlice::<u16>::try_from_bytes(BYTES) {
     ///         Ok(s) => s,
-    ///         Err(_) => unreachable!()
+    ///         Err(_) => unreachable!(),
     ///     }
     /// };
     ///
-    /// let zs_i16: &ZeroSlice<i16> = zs_u16.cast();
+    /// let zs_i16: &ZeroSlice<i16> = ZS_U16.cast();
     ///
-    /// assert_eq!(zs_u16.get(3), Some(32973));
+    /// assert_eq!(ZS_U16.get(3), Some(32973));
     /// assert_eq!(zs_i16.get(3), Some(-32563));
     /// ```
     #[inline]
-    pub fn cast<P>(&self) -> &ZeroSlice<P>
+    pub const fn cast<P>(&self) -> &ZeroSlice<P>
     where
         P: AsULE<ULE = T::ULE>,
     {
@@ -237,19 +287,19 @@ where
     /// ```
     /// use zerovec::ZeroSlice;
     ///
-    /// const bytes: &[u8] = &[0x7F, 0xF3, 0x01, 0x00, 0x49, 0xF6, 0x01, 0x00];
-    /// const zs_u32: &ZeroSlice<u32> = {
-    ///     match ZeroSlice::<u32>::try_from_bytes(bytes) {
+    /// const BYTES: &[u8] = &[0x7F, 0xF3, 0x01, 0x00, 0x49, 0xF6, 0x01, 0x00];
+    /// const ZS_U32: &ZeroSlice<u32> = {
+    ///     match ZeroSlice::<u32>::try_from_bytes(BYTES) {
     ///         Ok(s) => s,
-    ///         Err(_) => unreachable!()
+    ///         Err(_) => unreachable!(),
     ///     }
     /// };
     ///
-    /// let zs_char: &ZeroSlice<char> = zs_u32.try_as_converted()
-    ///     .expect("valid code points");
+    /// let zs_u8_4: &ZeroSlice<[u8; 4]> =
+    ///     ZS_U32.try_as_converted().expect("valid code points");
     ///
-    /// assert_eq!(zs_u32.get(0), Some(u32::from('🍿')));
-    /// assert_eq!(zs_char.get(0), Some('🍿'));
+    /// assert_eq!(ZS_U32.get(0), Some(127871));
+    /// assert_eq!(zs_u8_4.get(0), Some([0x7F, 0xF3, 0x01, 0x00]));
     /// ```
     #[inline]
     pub fn try_as_converted<P: AsULE>(&self) -> Result<&ZeroSlice<P>, ZeroVecError> {
@@ -265,7 +315,8 @@ where
     /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     ///
     /// assert_eq!(zerovec.first(), Some(211));
     /// ```
@@ -282,7 +333,8 @@ where
     /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     ///
     /// assert_eq!(zerovec.last(), Some(32973));
     /// ```
@@ -299,7 +351,8 @@ where
     /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     /// let mut it = zerovec.iter();
     ///
     /// assert_eq!(it.next(), Some(211));
@@ -309,8 +362,41 @@ where
     /// assert_eq!(it.next(), None);
     /// ```
     #[inline]
-    pub fn iter(&self) -> impl DoubleEndedIterator<Item = T> + '_ {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = T> + ExactSizeIterator<Item = T> + '_ {
         self.as_ule_slice().iter().copied().map(T::from_unaligned)
+    }
+
+    /// Returns a tuple with the first element and a subslice of the remaining elements.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use zerovec::ule::AsULE;
+    /// use zerovec::ZeroSlice;
+    ///
+    /// const DATA: &ZeroSlice<u16> =
+    ///     ZeroSlice::<u16>::from_ule_slice(&<u16 as AsULE>::ULE::from_array([
+    ///         211, 281, 421, 32973,
+    ///     ]));
+    /// const EXPECTED_VALUE: (u16, &ZeroSlice<u16>) = (
+    ///     211,
+    ///     ZeroSlice::<u16>::from_ule_slice(&<u16 as AsULE>::ULE::from_array([
+    ///         281, 421, 32973,
+    ///     ])),
+    /// );
+    /// assert_eq!(EXPECTED_VALUE, DATA.split_first().unwrap());
+    /// ```
+    #[inline]
+    pub fn split_first(&self) -> Option<(T, &ZeroSlice<T>)> {
+        if let Some(first) = self.first() {
+            return Some((
+                first,
+                // `unwrap()` must succeed, because `first()` returned `Some`.
+                #[allow(clippy::unwrap_used)]
+                self.get_subslice(1..self.len()).unwrap(),
+            ));
+        }
+        None
     }
 }
 
@@ -327,7 +413,8 @@ where
     /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     ///
     /// assert_eq!(zerovec.binary_search(&281), Ok(1));
     /// assert_eq!(zerovec.binary_search(&282), Err(2));
@@ -354,7 +441,8 @@ where
     /// use zerovec::ZeroVec;
     ///
     /// let bytes: &[u8] = &[0xD3, 0x00, 0x19, 0x01, 0xA5, 0x01, 0xCD, 0x80];
-    /// let zerovec: ZeroVec<u16> = ZeroVec::parse_byte_slice(bytes).expect("infallible");
+    /// let zerovec: ZeroVec<u16> =
+    ///     ZeroVec::parse_byte_slice(bytes).expect("infallible");
     ///
     /// assert_eq!(zerovec.binary_search_by(|x| x.cmp(&281)), Ok(1));
     /// assert_eq!(zerovec.binary_search_by(|x| x.cmp(&282)), Err(2));
@@ -443,7 +531,7 @@ where
     }
 }
 
-impl<'a, T: AsULE + PartialOrd> PartialOrd for ZeroSlice<T> {
+impl<T: AsULE + PartialOrd> PartialOrd for ZeroSlice<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.iter().partial_cmp(other.iter())
     }
@@ -457,13 +545,13 @@ impl<T: AsULE + Ord> Ord for ZeroSlice<T> {
 
 impl<T: AsULE> AsRef<ZeroSlice<T>> for Vec<T::ULE> {
     fn as_ref(&self) -> &ZeroSlice<T> {
-        ZeroSlice::<T>::from_ule_slice(&**self)
+        ZeroSlice::<T>::from_ule_slice(self)
     }
 }
 
 impl<T: AsULE> AsRef<ZeroSlice<T>> for &[T::ULE] {
     fn as_ref(&self) -> &ZeroSlice<T> {
-        ZeroSlice::<T>::from_ule_slice(&**self)
+        ZeroSlice::<T>::from_ule_slice(self)
     }
 }
 
@@ -473,5 +561,35 @@ where
 {
     fn default() -> Self {
         ZeroSlice::from_ule_slice(&[])
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::zeroslice;
+
+    #[test]
+    fn test_split_first() {
+        {
+            // empty slice.
+            assert_eq!(None, ZeroSlice::<u16>::new_empty().split_first());
+        }
+        {
+            // single element slice
+            const DATA: &ZeroSlice<u16> = zeroslice![u16; <u16 as AsULE>::ULE::from_unsigned; 211];
+            assert_eq!((211, zeroslice![]), DATA.split_first().unwrap());
+        }
+        {
+            // slice with many elements.
+            const DATA: &ZeroSlice<u16> =
+                zeroslice![u16; <u16 as AsULE>::ULE::from_unsigned; 211, 281, 421, 32973];
+            const EXPECTED_VALUE: (u16, &ZeroSlice<u16>) = (
+                211,
+                zeroslice![u16; <u16 as AsULE>::ULE::from_unsigned; 281, 421, 32973],
+            );
+
+            assert_eq!(EXPECTED_VALUE, DATA.split_first().unwrap());
+        }
     }
 }

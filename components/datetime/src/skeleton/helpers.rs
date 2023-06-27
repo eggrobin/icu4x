@@ -10,9 +10,9 @@ use crate::{
     fields::{self, Field, FieldLength, FieldSymbol},
     options::{components, length},
     pattern::{
-        hour_cycle, runtime,
-        runtime::{Pattern, PatternPlurals},
-        PatternItem,
+        hour_cycle,
+        runtime::{self, PatternPlurals},
+        PatternItem, TimeGranularity,
     },
     provider::calendar::{patterns::GenericLengthPatternsV1, DateSkeletonPatternsV1},
 };
@@ -42,7 +42,7 @@ const MAX_SKELETON_FIELDS: u32 = 10;
 
 // > 2. For fields with symbols representing the same type (year, month, day, etc):
 // >   A. Most symbols have a small distance from each other.
-// >     - Months: M ≅ L           (9 ≅ 9)  conjuction, vs stand-alone
+// >     - Months: M ≅ L           (9 ≅ 9)  conjunction, vs stand-alone
 // >       Week:   E ≅ c           (Tue ≅ 2)
 // >       Period: a ≅ b ≅ B       (am. ≅ mid. ≅ at night)
 // >       Hour:   H ≅ k ≅ h ≅ K   (23, 24, 12, 11)
@@ -90,10 +90,10 @@ pub enum BestSkeleton<T> {
 /// This function swaps out the the time zone name field for the appropriate one. Skeleton matching
 /// only needs to find a single "v" field, and then the time zone name can expand from there.
 fn naively_apply_time_zone_name(
-    pattern: &mut Pattern,
+    pattern: &mut runtime::Pattern,
     time_zone_name: &Option<components::TimeZoneName>,
 ) {
-    // If there is a preference overiding the hour cycle, apply it now.
+    // If there is a preference overriding the hour cycle, apply it now.
     if let Some(time_zone_name) = time_zone_name {
         runtime::helpers::maybe_replace_first(pattern, |item| {
             if let PatternItem::Field(fields::Field {
@@ -155,6 +155,7 @@ pub fn create_best_pattern_for_fields<'data>(
                     pattern_plurals.for_each_mut(|pattern| {
                         hour_cycle::naively_apply_preferences(pattern, &components.preferences);
                         naively_apply_time_zone_name(pattern, &components.time_zone_name);
+                        append_fractional_seconds(pattern, &time);
                     });
                 }
                 BestSkeleton::MissingOrExtraFields(pattern_plurals)
@@ -178,11 +179,12 @@ pub fn create_best_pattern_for_fields<'data>(
             BestSkeleton::AllFieldsMatch(fields) => (Some(fields), false),
             BestSkeleton::NoMatch => (None, true),
         };
-    let time_pattern: Option<Pattern<'data>> = time_patterns.map(|pattern_plurals| {
+    let time_pattern: Option<runtime::Pattern<'data>> = time_patterns.map(|pattern_plurals| {
         let mut pattern =
             pattern_plurals.expect_pattern("Only date patterns can contain plural variants");
         hour_cycle::naively_apply_preferences(&mut pattern, &components.preferences);
         naively_apply_time_zone_name(&mut pattern, &components.time_zone_name);
+        append_fractional_seconds(&mut pattern, &time);
         pattern
     });
 
@@ -230,8 +232,9 @@ pub fn create_best_pattern_for_fields<'data>(
             date_patterns.for_each_mut(|pattern| {
                 let date = pattern.clone();
                 let time = time_pattern.clone();
-                #[allow(clippy::expect_used)]
-                // TODO(#1668) Clippy exceptions need docs or fixing.
+
+                // TODO(#2626) - Since this is fallible, we should make this method fallible.
+                #[allow(clippy::expect_used)] // Generic pattern combination should never fail.
                 let dt = dt_pattern
                     .clone()
                     .combined(date, time)
@@ -299,7 +302,7 @@ fn group_fields_by_type(fields: &[Field]) -> FieldsByType {
 /// Alters given Pattern so that its fields have the same length as 'fields'.
 ///
 ///  For example the "d MMM y" pattern will be changed to "d MMMM y" given fields ["y", "MMMM", "d"].
-fn adjust_pattern_field_lengths(fields: &[Field], pattern: &mut Pattern) {
+fn adjust_pattern_field_lengths(fields: &[Field], pattern: &mut runtime::Pattern) {
     runtime::helpers::maybe_replace(pattern, |item| {
         if let PatternItem::Field(pattern_field) = item {
             if let Some(requested_field) = fields
@@ -315,6 +318,36 @@ fn adjust_pattern_field_lengths(fields: &[Field], pattern: &mut Pattern) {
         }
         None
     })
+}
+
+/// Alters given Pattern so that it will have a fractional second field if it was requested.
+///
+/// If the requested skeleton included both seconds and fractional seconds and the dateFormatItem
+/// skeleton included seconds but not fractional seconds, then the seconds field of the corresponding
+/// pattern should be adjusted by appending the locale’s decimal separator, followed by the sequence
+/// of ‘S’ characters from the requested skeleton.
+/// (see <https://unicode.org/reports/tr35/tr35-dates.html#Matching_Skeletons>)
+fn append_fractional_seconds(pattern: &mut runtime::Pattern, fields: &[Field]) {
+    if let Some(requested_field) = fields
+        .iter()
+        .find(|field| field.symbol == FieldSymbol::Second(fields::Second::FractionalSecond))
+    {
+        let mut items = pattern.items.to_vec();
+        if let Some(pos) = items.iter().position(|&item| match item {
+            PatternItem::Field(field) => {
+                matches!(field.symbol, FieldSymbol::Second(fields::Second::Second))
+            }
+            _ => false,
+        }) {
+            if let FieldLength::Fixed(p) = requested_field.length {
+                if p > 0 {
+                    items.insert(pos + 1, PatternItem::Field(*requested_field));
+                }
+            }
+        }
+        *pattern = runtime::Pattern::from(items);
+        pattern.time_granularity = TimeGranularity::Nanoseconds;
+    }
 }
 
 /// A partial implementation of the [UTS 35 skeleton matching algorithm](https://unicode.org/reports/tr35/tr35-dates.html#Matching_Skeletons).
@@ -333,6 +366,10 @@ fn adjust_pattern_field_lengths(fields: &[Field], pattern: &mut Pattern) {
 ///  * 2.6.2.2 Missing Skeleton Fields
 ///    - TODO(#586) - Using the CLDR appendItems field. Note: There is not agreement yet on how
 ///      much of this step to implement. See the issue for more information.
+///
+/// # Panics
+///
+/// Panics if `prefer_matched_pattern` is set to true in a non-datagen mode.
 pub fn get_best_available_format_pattern<'data>(
     skeletons: &DateSkeletonPatternsV1<'data>,
     fields: &[Field],
@@ -353,6 +390,8 @@ pub fn get_best_available_format_pattern<'data>(
 
         let mut requested_fields = fields.iter().peekable();
         let mut skeleton_fields = skeleton.0.fields_iter().peekable();
+
+        let mut matched_seconds = false;
         loop {
             let next = (requested_fields.peek(), skeleton_fields.peek());
 
@@ -378,13 +417,29 @@ pub fn get_best_available_format_pattern<'data>(
                             continue;
                         }
                         Ordering::Greater => {
-                            // The requested field symbol is missing from the skeleton.
-                            distance += REQUESTED_SYMBOL_MISSING;
-                            missing_fields += 1;
-                            requested_fields.next();
-                            continue;
+                            // https://unicode.org/reports/tr35/tr35-dates.html#Matching_Skeletons
+                            // A requested skeleton that includes both seconds and fractional seconds (e.g. “mmssSSS”) is allowed
+                            // to match a dateFormatItem skeleton that includes seconds but not fractional seconds (e.g. “ms”).
+                            if !(matched_seconds
+                                && requested_field.symbol
+                                    == FieldSymbol::Second(fields::Second::FractionalSecond))
+                            {
+                                // The requested field symbol is missing from the skeleton.
+                                distance += REQUESTED_SYMBOL_MISSING;
+                                missing_fields += 1;
+                                requested_fields.next();
+                                continue;
+                            }
                         }
                         _ => (),
+                    }
+
+                    if requested_field.symbol
+                        == FieldSymbol::Second(fields::Second::FractionalSecond)
+                        && skeleton_field.symbol
+                            == FieldSymbol::Second(fields::Second::FractionalSecond)
+                    {
+                        matched_seconds = true;
                     }
 
                     distance += if requested_field == skeleton_field {
@@ -430,15 +485,16 @@ pub fn get_best_available_format_pattern<'data>(
             // A single field was requested and the best pattern either includes extra fields or can't be adjusted to match
             // (e.g. text vs numeric). We return the field instead of the matched pattern.
             return BestSkeleton::AllFieldsMatch(
-                Pattern::from(vec![PatternItem::Field(*field)]).into(),
+                runtime::Pattern::from(vec![PatternItem::Field(*field)]).into(),
             );
         }
     }
 
-    #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-    let mut closest_format_pattern = closest_format_pattern
-        .expect("At least one closest format pattern will always be found.")
-        .clone();
+    let mut closest_format_pattern = if let Some(pattern) = closest_format_pattern {
+        pattern.clone()
+    } else {
+        return BestSkeleton::NoMatch;
+    };
 
     if closest_missing_fields == fields.len() {
         return BestSkeleton::NoMatch;
@@ -449,7 +505,7 @@ pub fn get_best_available_format_pattern<'data>(
     }
 
     // Modify the resulting pattern to have fields of the same length.
-    #[allow(clippy::panic)] // TODO(#1668) Clippy exceptions need docs or fixing.
+    #[allow(clippy::panic)] // guards against running this branch in non-datagen mode.
     if prefer_matched_pattern {
         #[cfg(not(feature = "datagen"))]
         panic!("This code branch should only be run when transforming provider code.");

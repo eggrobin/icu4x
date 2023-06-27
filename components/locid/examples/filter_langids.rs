@@ -16,6 +16,7 @@ icu_benchmark_macros::static_setup!();
 use std::env;
 
 use icu_locid::{subtags, LanguageIdentifier};
+use writeable::Writeable;
 
 const DEFAULT_INPUT: &str =
     "de, en-us, zh-hant, sr-cyrl, fr-ca, es-cl, pl, en-latn-us, ca-valencia, und-arab";
@@ -30,7 +31,9 @@ fn filter_input(input: &str) -> String {
     let en_langids = langids.filter(|langid: &LanguageIdentifier| langid.language == en_lang);
 
     // 3. Serialize the output.
-    let en_strs: Vec<String> = en_langids.map(|langid| langid.to_string()).collect();
+    let en_strs: Vec<String> = en_langids
+        .map(|langid| langid.write_to_string().into_owned())
+        .collect();
 
     en_strs.join(", ")
 }
@@ -48,7 +51,7 @@ fn main(_argc: isize, _argv: *const *const u8) -> isize {
     let _output = filter_input(input);
 
     #[cfg(debug_assertions)]
-    println!("\nInput: {}\nOutput: {}", input, _output);
+    println!("\nInput: {input}\nOutput: {_output}");
 
     0
 }

@@ -3,35 +3,40 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 use crate::{
-    date::{DateTimeInput, LocalizedDateTimeInput},
-    error::DateTimeFormatError,
+    error::DateTimeError,
     fields::{Field, FieldSymbol, Week},
+    input::{DateTimeInput, LocalizedDateTimeInput},
     pattern::{runtime::Pattern, PatternError, PatternItem},
 };
 use either::Either;
 use icu_plurals::{PluralCategory, PluralRules};
-use icu_provider::{yoke, zerofrom};
+use icu_provider::prelude::*;
 
 /// A collection of plural variants of a pattern.
 #[derive(Debug, PartialEq, Clone, yoke::Yokeable, zerofrom::ZeroFrom)]
-#[cfg_attr(feature = "datagen", derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "datagen",
+    derive(serde::Serialize, databake::Bake),
+    databake(path = icu_datetime::pattern::runtime),
+)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[allow(clippy::exhaustive_structs)] // part of data struct
 pub struct PluralPattern<'data> {
     /// The field that 'variants' are predicated on.
-    pivot_field: Week,
+    pub pivot_field: Week,
 
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub(crate) zero: Option<Pattern<'data>>,
+    pub zero: Option<Pattern<'data>>,
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub(crate) one: Option<Pattern<'data>>,
+    pub one: Option<Pattern<'data>>,
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub(crate) two: Option<Pattern<'data>>,
+    pub two: Option<Pattern<'data>>,
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub(crate) few: Option<Pattern<'data>>,
+    pub few: Option<Pattern<'data>>,
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub(crate) many: Option<Pattern<'data>>,
+    pub many: Option<Pattern<'data>>,
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub(crate) other: Pattern<'data>,
+    pub other: Pattern<'data>,
 }
 
 impl<'data> PluralPattern<'data> {
@@ -126,10 +131,18 @@ impl<'data> PluralPattern<'data> {
     }
 }
 
-/// Either a single Pattern or a collection of pattern when there are plural variants.
+/// Either a [`Pattern`] single pattern or a [`PluralPattern`] collection of
+/// patterns when there are plural variants.
+///
+/// Currently, the plural forms are only based on the week number.
 #[derive(Debug, PartialEq, Clone, yoke::Yokeable, zerofrom::ZeroFrom)]
 #[allow(clippy::large_enum_variant)]
 #[allow(clippy::exhaustive_enums)] // this type is stable
+#[cfg_attr(
+    feature = "datagen",
+    derive(databake::Bake),
+    databake(path = icu_datetime::pattern::runtime),
+)]
 pub enum PatternPlurals<'data> {
     /// A collection of pattern variants for when plurals differ.
     MultipleVariants(PluralPattern<'data>),
@@ -143,7 +156,7 @@ impl<'data> PatternPlurals<'data> {
         &self,
         loc_datetime: &impl LocalizedDateTimeInput<T>,
         ordinal_rules: Option<&PluralRules>,
-    ) -> Result<&Pattern, DateTimeFormatError>
+    ) -> Result<&Pattern, DateTimeError>
     where
         T: DateTimeInput,
     {
@@ -152,13 +165,11 @@ impl<'data> PatternPlurals<'data> {
             Self::MultipleVariants(plural_pattern) => {
                 let week_number = match plural_pattern.pivot_field() {
                     Week::WeekOfMonth => loc_datetime.week_of_month()?.0,
-                    Week::WeekOfYear => loc_datetime.week_of_year()?.0,
+                    Week::WeekOfYear => loc_datetime.week_of_year()?.1 .0,
                 };
-                #[allow(clippy::expect_used)]
-                // TODO(#1668) Clippy exceptions need docs or fixing.
                 let category = ordinal_rules
-                    .expect("ordinal_rules must be set with PatternPlurals::MultipleVariants")
-                    .select(week_number);
+                    .ok_or(DateTimeError::MissingOrdinalRules)?
+                    .category_for(week_number);
                 Ok(plural_pattern.variant(category))
             }
         }
@@ -193,8 +204,15 @@ impl<'data> PatternPlurals<'data> {
     pub fn expect_pattern(self, msg: &str) -> Pattern<'data> {
         match self {
             Self::SinglePattern(pattern) => pattern,
-            #[allow(clippy::panic)] // TODO(#1668) Clippy exceptions need docs or fixing.
-            _ => panic!("expect_pattern failed: {}", msg),
+
+            Self::MultipleVariants(patterns) => {
+                // Potentially change to log::warn! in #2648
+                debug_assert!(
+                    false,
+                    "expect_pattern called with bad data (falling back to `other` pattern): {msg}"
+                );
+                patterns.other
+            }
         }
     }
 

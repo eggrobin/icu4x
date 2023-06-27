@@ -2,7 +2,7 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use super::super::{runtime, PatternItem};
+use super::{super::PatternItem, Pattern};
 use zerovec::ule::AsULE;
 
 /// Helper function which takes a runtime `Pattern` and calls
@@ -16,18 +16,15 @@ use zerovec::ule::AsULE;
 /// item to be replaced allocating the `Pattern` only if needed.
 ///
 /// For a variant that replaces all matching instances, see `maybe_replace`.
-pub fn maybe_replace_first(
-    pattern: &mut runtime::Pattern,
-    f: impl Fn(&PatternItem) -> Option<PatternItem>,
-) {
+pub fn maybe_replace_first(pattern: &mut Pattern, f: impl Fn(&PatternItem) -> Option<PatternItem>) {
     let result = pattern
         .items
         .iter()
         .enumerate()
         .find_map(|(i, item)| f(&item).map(|result| (i, result)));
-    #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
+    #[allow(clippy::indexing_slicing)] // i was produced by enumerate
     if let Some((i, result)) = result {
-        pattern.items.to_mut()[i] = result.to_unaligned();
+        pattern.items.to_mut_slice()[i] = result.to_unaligned();
     }
 }
 
@@ -41,18 +38,16 @@ pub fn maybe_replace_first(
 ///
 /// For a variant that replaces just the first matching instance,
 /// see `maybe_replace_first`.
-pub fn maybe_replace(
-    pattern: &mut runtime::Pattern,
-    f: impl Fn(&PatternItem) -> Option<PatternItem>,
-) {
+#[cfg(any(feature = "datagen", feature = "experimental"))] // only referenced in experimental code
+pub fn maybe_replace(pattern: &mut Pattern, f: impl Fn(&PatternItem) -> Option<PatternItem>) {
     let result = pattern
         .items
         .iter()
         .enumerate()
         .find_map(|(i, item)| f(&item).map(|result| (i, result)));
-    #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
+    #[allow(clippy::indexing_slicing)] // i was produced by enumerate
     if let Some((i, result)) = result {
-        let owned = pattern.items.to_mut();
+        let owned = pattern.items.to_mut_slice();
         owned[i] = result.to_unaligned();
         owned.iter_mut().skip(i).for_each(|item| {
             if let Some(new_item) = f(&PatternItem::from_unaligned(*item)) {

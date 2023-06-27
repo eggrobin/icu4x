@@ -7,8 +7,8 @@ use crate::fields;
 use core::convert::TryFrom;
 use zerovec::ule::{AsULE, ZeroVecError, ULE};
 
-/// `PatternItemULE` is a type optimized for efficent storing and
-/// deserialization of `DateTimeFormat` `PatternItem` elements using
+/// `PatternItemULE` is a type optimized for efficient storing and
+/// deserialization of `TypedDateTimeFormatter` `PatternItem` elements using
 /// `ZeroVec` model.
 ///
 /// The serialization model packages the pattern item in three bytes.
@@ -60,7 +60,7 @@ pub struct PatternItemULE([u8; 3]);
 
 impl PatternItemULE {
     /// Given the first byte of the three-byte array that `PatternItemULE` encodes,
-    /// the method determins whether the discriminant in
+    /// the method determines whether the discriminant in
     /// the byte indicates that the array encodes the `PatternItem::Field`
     /// or `PatternItem::Literal` variant of the `PatternItem`.
     ///
@@ -72,13 +72,12 @@ impl PatternItemULE {
 
     #[inline]
     fn bytes_in_range(value: (&u8, &u8, &u8)) -> bool {
-        match Self::determine_field_from_u8(*value.0) {
+        if Self::determine_field_from_u8(*value.0) {
             // ensure that unused bytes are all zero
-            true => fields::Field::bytes_in_range(value.1, value.2) && *value.0 == 0b1000_0000,
-            false => {
-                let u = u32::from_be_bytes([0x00, *value.0, *value.1, *value.2]);
-                char::try_from(u).is_ok()
-            }
+            fields::FieldULE::validate_bytes((*value.1, *value.2)).is_ok()
+                && *value.0 == 0b1000_0000
+        } else {
+            char::try_from(u32::from_be_bytes([0x00, *value.0, *value.1, *value.2])).is_ok()
         }
     }
 }
@@ -94,15 +93,16 @@ impl PatternItemULE {
 //  6. PatternItemULE byte equality is semantic equality.
 unsafe impl ULE for PatternItemULE {
     fn validate_byte_slice(bytes: &[u8]) -> Result<(), ZeroVecError> {
-        let mut chunks = bytes.chunks_exact(3);
-
-        #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        if !chunks.all(|c| Self::bytes_in_range((&c[0], &c[1], &c[2]))) {
-            return Err(ZeroVecError::parse::<Self>());
+        if bytes.len() % 3 != 0 {
+            return Err(ZeroVecError::length::<Self>(bytes.len()));
         }
 
-        if !chunks.remainder().is_empty() {
-            return Err(ZeroVecError::length::<Self>(bytes.len()));
+        #[allow(clippy::indexing_slicing)] // chunks
+        if !bytes
+            .chunks(3)
+            .all(|c| Self::bytes_in_range((&c[0], &c[1], &c[2])))
+        {
+            return Err(ZeroVecError::parse::<Self>());
         }
         Ok(())
     }
@@ -128,29 +128,22 @@ impl AsULE for PatternItem {
     #[inline]
     fn from_unaligned(unaligned: Self::ULE) -> Self {
         let value = unaligned.0;
-        match PatternItemULE::determine_field_from_u8(value[0]) {
-            false => {
-                let u = u32::from_be_bytes([0x00, value[0], value[1], value[2]]);
-                #[allow(clippy::unwrap_used)]
-                // TODO(#1668) Clippy exceptions need docs or fixing.
-                PatternItem::Literal(char::try_from(u).unwrap())
-            }
-            true => {
-                #[allow(clippy::unwrap_used)]
-                // TODO(#1668) Clippy exceptions need docs or fixing.
-                let symbol = fields::FieldSymbol::from_idx(value[1]).unwrap();
-                #[allow(clippy::unwrap_used)]
-                // TODO(#1668) Clippy exceptions need docs or fixing.
-                let length = fields::FieldLength::from_idx(value[2]).unwrap();
-                let field = fields::Field { symbol, length };
-                PatternItem::Field(field)
-            }
+        #[allow(clippy::unwrap_used)] // validated
+        if PatternItemULE::determine_field_from_u8(value[0]) {
+            let symbol = fields::FieldSymbol::from_idx(value[1]).unwrap();
+            let length = fields::FieldLength::from_idx(value[2]).unwrap();
+            PatternItem::Field(fields::Field { symbol, length })
+        } else {
+            // validated
+            PatternItem::Literal(unsafe {
+                char::from_u32_unchecked(u32::from_be_bytes([0x00, value[0], value[1], value[2]]))
+            })
         }
     }
 }
 
-/// `GenericPatternItemULE` is a type optimized for efficent storing and
-/// deserialization of `DateTimeFormat` `GenericPatternItem` elements using
+/// `GenericPatternItemULE` is a type optimized for efficient storing and
+/// deserialization of `TypedDateTimeFormatter` `GenericPatternItem` elements using
 /// the `ZeroVec` model.
 ///
 /// The serialization model packages the pattern item in three bytes.
@@ -202,7 +195,7 @@ pub struct GenericPatternItemULE([u8; 3]);
 
 impl GenericPatternItemULE {
     /// Given the first byte of the three-byte array that `GenericPatternItemULE` encodes,
-    /// the method determins whether the discriminant in
+    /// the method determines whether the discriminant in
     /// the byte indicates that the array encodes the `GenericPatternItem::Field`
     /// or `GenericPatternItem::Literal` variant of the `GenericPatternItem`.
     ///
@@ -214,13 +207,12 @@ impl GenericPatternItemULE {
 
     #[inline]
     fn bytes_in_range(value: (&u8, &u8, &u8)) -> bool {
-        match Self::determine_field_from_u8(*value.0) {
+        if Self::determine_field_from_u8(*value.0) {
             // ensure that unused bytes are all zero
-            true => *value.0 == 0b1000_0000 && *value.1 == 0,
-            false => {
-                let u = u32::from_be_bytes([0x00, *value.0, *value.1, *value.2]);
-                char::try_from(u).is_ok()
-            }
+            *value.0 == 0b1000_0000 && *value.1 == 0 && *value.2 < 10
+        } else {
+            let u = u32::from_be_bytes([0x00, *value.0, *value.1, *value.2]);
+            char::try_from(u).is_ok()
         }
     }
 }
@@ -236,14 +228,15 @@ impl GenericPatternItemULE {
 //  6. GenericPatternItemULE byte equality is semantic equality.
 unsafe impl ULE for GenericPatternItemULE {
     fn validate_byte_slice(bytes: &[u8]) -> Result<(), ZeroVecError> {
-        let mut chunks = bytes.chunks_exact(3);
-        #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        if !chunks.all(|c| Self::bytes_in_range((&c[0], &c[1], &c[2]))) {
-            return Err(ZeroVecError::parse::<Self>());
-        }
-
-        if !chunks.remainder().is_empty() {
+        if bytes.len() % 3 != 0 {
             return Err(ZeroVecError::length::<Self>(bytes.len()));
+        }
+        #[allow(clippy::indexing_slicing)] // chunks
+        if !bytes
+            .chunks_exact(3)
+            .all(|c| Self::bytes_in_range((&c[0], &c[1], &c[2])))
+        {
+            return Err(ZeroVecError::parse::<Self>());
         }
         Ok(())
     }
@@ -267,14 +260,13 @@ impl AsULE for GenericPatternItem {
     #[inline]
     fn from_unaligned(unaligned: Self::ULE) -> Self {
         let value = unaligned.0;
-        match GenericPatternItemULE::determine_field_from_u8(value[0]) {
-            false => {
-                let u = u32::from_be_bytes([0x00, value[0], value[1], value[2]]);
-                #[allow(clippy::unwrap_used)]
-                // TODO(#1668) Clippy exceptions need docs or fixing.
-                Self::Literal(char::try_from(u).unwrap())
-            }
-            true => Self::Placeholder(value[2]),
+        if GenericPatternItemULE::determine_field_from_u8(value[0]) {
+            Self::Placeholder(value[2])
+        } else {
+            #[allow(clippy::unwrap_used)] // validated
+            Self::Literal(
+                char::try_from(u32::from_be_bytes([0x00, value[0], value[1], value[2]])).unwrap(),
+            )
         }
     }
 }
@@ -287,14 +279,14 @@ mod test {
 
     #[test]
     fn test_pattern_item_as_ule() {
-        let samples = &[
+        let samples = [
             (
                 PatternItem::from((FieldSymbol::Minute, FieldLength::TwoDigit)),
-                &[0x80, FieldSymbol::Minute.idx(), FieldLength::TwoDigit.idx()],
+                [0x80, FieldSymbol::Minute.idx(), FieldLength::TwoDigit.idx()],
             ),
             (
                 PatternItem::from((FieldSymbol::Year(Year::Calendar), FieldLength::Wide)),
-                &[
+                [
                     0x80,
                     FieldSymbol::Year(Year::Calendar).idx(),
                     FieldLength::Wide.idx(),
@@ -302,7 +294,7 @@ mod test {
             ),
             (
                 PatternItem::from((FieldSymbol::Year(Year::WeekOf), FieldLength::Wide)),
-                &[
+                [
                     0x80,
                     FieldSymbol::Year(Year::WeekOf).idx(),
                     FieldLength::Wide.idx(),
@@ -310,39 +302,39 @@ mod test {
             ),
             (
                 PatternItem::from((FieldSymbol::Second(Second::Millisecond), FieldLength::One)),
-                &[
+                [
                     0x80,
                     FieldSymbol::Second(Second::Millisecond).idx(),
                     FieldLength::One.idx(),
                 ],
             ),
-            (PatternItem::from('z'), &[0x00, 0x00, 0x7a]),
+            (PatternItem::from('z'), [0x00, 0x00, 0x7a]),
         ];
 
         for (ref_pattern, ref_bytes) in samples {
             let ule = ref_pattern.to_unaligned();
-            assert_eq!(ULE::as_byte_slice(&[ule]), *ref_bytes);
+            assert_eq!(ULE::as_byte_slice(&[ule]), ref_bytes);
             let pattern = PatternItem::from_unaligned(ule);
-            assert_eq!(pattern, *ref_pattern);
+            assert_eq!(pattern, ref_pattern);
         }
     }
 
     #[test]
     fn test_pattern_item_ule() {
-        let samples = &[(
-            &[
+        let samples = [(
+            [
                 PatternItem::from((FieldSymbol::Year(Year::Calendar), FieldLength::Wide)),
                 PatternItem::from('z'),
                 PatternItem::from((FieldSymbol::Second(Second::Millisecond), FieldLength::One)),
             ],
-            &[
-                &[
+            [
+                [
                     0x80,
                     FieldSymbol::Year(Year::Calendar).idx(),
                     FieldLength::Wide.idx(),
                 ],
-                &[0x00, 0x00, 0x7a],
-                &[
+                [0x00, 0x00, 0x7a],
+                [
                     0x80,
                     FieldSymbol::Second(Second::Millisecond).idx(),
                     FieldLength::One.idx(),
@@ -359,7 +351,7 @@ mod test {
 
             let mut bytes2: Vec<u8> = vec![];
             for seq in ref_bytes.iter() {
-                bytes2.extend_from_slice(*seq);
+                bytes2.extend_from_slice(seq);
             }
 
             assert!(PatternItemULE::validate_byte_slice(&bytes).is_ok());
@@ -369,17 +361,17 @@ mod test {
 
     #[test]
     fn test_generic_pattern_item_as_ule() {
-        let samples = &[
-            (GenericPatternItem::Placeholder(4), &[0x80, 0x00, 4]),
-            (GenericPatternItem::Placeholder(0), &[0x80, 0x00, 0]),
-            (GenericPatternItem::from('z'), &[0x00, 0x00, 0x7a]),
+        let samples = [
+            (GenericPatternItem::Placeholder(4), [0x80, 0x00, 4]),
+            (GenericPatternItem::Placeholder(0), [0x80, 0x00, 0]),
+            (GenericPatternItem::from('z'), [0x00, 0x00, 0x7a]),
         ];
 
         for (ref_pattern, ref_bytes) in samples {
             let ule = ref_pattern.to_unaligned();
-            assert_eq!(ULE::as_byte_slice(&[ule]), *ref_bytes);
+            assert_eq!(ULE::as_byte_slice(&[ule]), ref_bytes);
             let pattern = GenericPatternItem::from_unaligned(ule);
-            assert_eq!(pattern, *ref_pattern);
+            assert_eq!(pattern, ref_pattern);
         }
     }
 }

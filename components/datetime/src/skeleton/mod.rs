@@ -13,7 +13,7 @@ mod serde;
 pub use error::*;
 pub use helpers::*;
 
-#[cfg(all(test, feature = "datagen"))]
+#[cfg(all(test, feature = "datagen", feature = "experimental"))]
 mod test {
     use super::reference::Skeleton;
     use super::*;
@@ -23,9 +23,10 @@ mod test {
     use crate::{
         fields::{Day, Field, FieldLength, Month, Weekday},
         options::components,
-        pattern::runtime::Pattern,
+        pattern::runtime,
         provider::calendar::{
-            DatePatternsV1Marker, DateSkeletonPatternsV1, DateSkeletonPatternsV1Marker, SkeletonV1,
+            DateSkeletonPatternsV1, DateSkeletonPatternsV1Marker, GregorianDateLengthsV1Marker,
+            SkeletonV1,
         },
     };
     use core::convert::TryFrom;
@@ -38,24 +39,23 @@ mod test {
     };
 
     fn get_data_payload() -> (
-        DataPayload<DatePatternsV1Marker>,
+        DataPayload<GregorianDateLengthsV1Marker>,
         DataPayload<DateSkeletonPatternsV1Marker>,
     ) {
-        let provider = icu_testdata::get_provider();
-        let locale: Locale = "en-u-ca-gregory".parse().unwrap();
-        let patterns = provider
-            .load_resource(&DataRequest {
-                options: ResourceOptions::from(&locale),
-                metadata: Default::default(),
-            })
+        let locale = "en-u-ca-gregory".parse::<Locale>().unwrap().into();
+        let req = DataRequest {
+            locale: &locale,
+            metadata: Default::default(),
+        };
+        let patterns = icu_testdata::buffer()
+            .as_deserializing()
+            .load(req)
             .expect("Failed to load payload")
             .take_payload()
             .expect("Failed to retrieve payload");
-        let skeletons = provider
-            .load_resource(&DataRequest {
-                options: locale.into(),
-                metadata: Default::default(),
-            })
+        let skeletons = icu_testdata::buffer()
+            .as_deserializing()
+            .load(req)
             .expect("Failed to load payload")
             .take_payload()
             .expect("Failed to retrieve payload");
@@ -86,8 +86,9 @@ mod test {
                 assert_eq!(
                     available_format_pattern
                         .expect_pattern("pattern should not have plural variants")
-                        .to_string(),
-                    String::from("H:m:s")
+                        .to_string()
+                        .as_str(),
+                    "H:m:s"
                 )
             }
             BestSkeleton::NoMatch => {
@@ -111,13 +112,14 @@ mod test {
                 assert_eq!(
                     available_format_pattern
                         .expect_pattern("pattern should not have plural variants")
-                        .to_string(),
+                        .to_string()
+                        .as_str(),
                     // CLDR has ("yw", "MMMMW", "ccc"). The first two result in 1 missing & 1 extra symbol vs just
                     // 1 missing symbol for "ccc".
-                    String::from("ccc")
+                    "ccc"
                 )
             }
-            best => panic!("Unexpected {:?}", best),
+            best => panic!("Unexpected {best:?}"),
         };
     }
 
@@ -148,11 +150,12 @@ mod test {
                 assert_eq!(
                     available_format_pattern
                         .expect_pattern("pattern should not have plural variants")
-                        .to_string(),
-                    String::from("MMMM d, y vvvv")
+                        .to_string()
+                        .as_str(),
+                    "MMMM d, y vvvv"
                 )
             }
-            best => panic!("Unexpected {:?}", best),
+            best => panic!("Unexpected {best:?}"),
         };
     }
 
@@ -181,7 +184,7 @@ mod test {
         let mut skeletons = LiteMap::new();
         skeletons.insert(
             SkeletonV1::try_from("EEEE").unwrap(),
-            Pattern::from_str("weekday EEEE").unwrap().into(),
+            runtime::Pattern::from_str("weekday EEEE").unwrap().into(),
         );
         let skeletons = DateSkeletonPatternsV1(skeletons);
 
@@ -205,7 +208,7 @@ mod test {
         "y", "yM", "yMdEEEE", "yMdE", "yMM", "yMMM", "yMMMdEEEE", "yMMMdE", "yMMMM", "yMMMMdEEEE",
         "yMMMMdE", "yMMMMdcccc", "yMMMMd", "yMMMd", "yMMdd", "yMd", "yw",
         "Gy", "GyM", "GyMMM", "GyMMMdEEEE", "GyMMMdE", "GyMMMM", "GyMMMMdE", "GyMMMMd", "GyMMMd",
-        // Timezones
+        // Time zones
         "HHmmZ", "Hmsv", "Hmsvvvv", "Hmv", "Hmvvvv", "hmsv", "hmsvvvv", "hmv", "hmvvvv",
     ];
 
@@ -228,8 +231,7 @@ mod test {
                 Ok(_) => {}
                 Err(err) => {
                     panic!(
-                        "Unable to parse string_skeleton {:?} with error, {:?}",
-                        string_skeleton, err
+                        "Unable to parse string_skeleton {string_skeleton:?} with error, {err:?}"
                     )
                 }
             }
@@ -242,16 +244,15 @@ mod test {
             match Skeleton::try_from(*string_skeleton) {
                 Ok(_) => {
                     panic!(
-                        "An unsupported field is now supported, consider moving {:?} to the \
-                         supported skeletons, and ensure the skeleton is properly implemented.",
-                        string_skeleton
+                        "An unsupported field is now supported, consider moving {string_skeleton:?} to the \
+                         supported skeletons, and ensure the skeleton is properly implemented."
                     )
                 }
                 Err(err) => match err {
                     SkeletonError::SymbolUnimplemented(_) => {
                         // Every skeleton should return this error.
                     }
-                    _ => panic!("{}", err),
+                    _ => panic!("{err}"),
                 },
             }
         }
@@ -325,7 +326,7 @@ mod test {
             serde_json::from_str::<Skeleton>(&json).expect_err("Expected a duplicate field error.");
 
         assert_eq!(
-            format!("{}", err),
+            format!("{err}"),
             "invalid value: \"EEEEyMdEEEE\" duplicate field in skeleton, expected field symbols representing a skeleton at line 1 column 13"
         );
     }
@@ -359,8 +360,7 @@ mod test {
                     .expect("Failed to create pattern from bytes.")
             ))
             .expect("Failed to transform skeleton to string."),
-            "{}",
-            message
+            "{message}"
         );
     }
 
@@ -389,12 +389,12 @@ mod test {
         assert_pattern_to_skeleton("S", "S", "Seconds pass through");
         assert_pattern_to_skeleton("A", "A", "Seconds pass through");
 
-        assert_pattern_to_skeleton("z", "z", "Timezones get passed through");
-        assert_pattern_to_skeleton("Z", "Z", "Timezones get passed through");
-        assert_pattern_to_skeleton("O", "O", "Timezones get passed through");
-        assert_pattern_to_skeleton("v", "v", "Timezones get passed through");
-        assert_pattern_to_skeleton("V", "V", "Timezones get passed through");
-        assert_pattern_to_skeleton("X", "X", "Timezones get passed through");
-        assert_pattern_to_skeleton("x", "x", "Timezones get passed through");
+        assert_pattern_to_skeleton("z", "z", "Time zones get passed through");
+        assert_pattern_to_skeleton("Z", "Z", "Time zones get passed through");
+        assert_pattern_to_skeleton("O", "O", "Time zones get passed through");
+        assert_pattern_to_skeleton("v", "v", "Time zones get passed through");
+        assert_pattern_to_skeleton("V", "V", "Time zones get passed through");
+        assert_pattern_to_skeleton("X", "X", "Time zones get passed through");
+        assert_pattern_to_skeleton("x", "x", "Time zones get passed through");
     }
 }

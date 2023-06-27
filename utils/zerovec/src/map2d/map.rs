@@ -11,7 +11,7 @@ use core::fmt;
 use core::iter::FromIterator;
 use core::ops::Range;
 
-use super::ZeroMap2dBorrowed;
+use super::*;
 use crate::map::ZeroMapKV;
 use crate::map::{MutableZeroVecLike, ZeroVecLike};
 
@@ -34,15 +34,17 @@ use crate::map::{MutableZeroVecLike, ZeroVecLike};
 /// use zerovec::ZeroMap2d;
 ///
 /// // Example byte buffer representing the map { 1: {2: "three" } }
-/// let BINCODE_BYTES: &[u8; 53] = &[
-///     2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0,
-///     0, 0, 2, 0, 13, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 116, 104, 114, 101, 101
+/// let BINCODE_BYTES: &[u8; 51] = &[
+///     2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0,
+///     0, 0, 0, 0, 0, 0, 2, 0, 11, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 116,
+///     104, 114, 101, 101,
 /// ];
 ///
 /// // Deserializing to ZeroMap requires no heap allocations.
-/// let zero_map: ZeroMap2d<u16, u16, str> = bincode::deserialize(BINCODE_BYTES)
-///     .expect("Should deserialize successfully");
-/// assert_eq!(zero_map.get(&1, &2), Ok("three"));
+/// let zero_map: ZeroMap2d<u16, u16, str> =
+///     bincode::deserialize(BINCODE_BYTES)
+///         .expect("Should deserialize successfully");
+/// assert_eq!(zero_map.get_2d(&1, &2), Some("three"));
 /// ```
 ///
 /// [`VarZeroVec`]: crate::VarZeroVec
@@ -87,13 +89,6 @@ where
     pub(crate) values: V::Container,
 }
 
-#[derive(PartialEq, Debug)]
-/// Used in error types to communicate for which key the error occured.
-pub enum KeyError {
-    K0,
-    K1,
-}
-
 impl<'a, K0, K1, V> Default for ZeroMap2d<'a, K0, K1, V>
 where
     K0: ZeroMapKV<'a>,
@@ -129,10 +124,25 @@ where
     /// ```
     pub fn new() -> Self {
         Self {
-            keys0: K0::Container::zvl_new(),
+            keys0: K0::Container::zvl_with_capacity(0),
             joiner: ZeroVec::new(),
-            keys1: K1::Container::zvl_new(),
-            values: V::Container::zvl_new(),
+            keys1: K1::Container::zvl_with_capacity(0),
+            values: V::Container::zvl_with_capacity(0),
+        }
+    }
+
+    #[doc(hidden)] // databake internal
+    pub const unsafe fn from_parts_unchecked(
+        keys0: K0::Container,
+        joiner: ZeroVec<'a, u32>,
+        keys1: K1::Container,
+        values: V::Container,
+    ) -> Self {
+        Self {
+            keys0,
+            joiner,
+            keys1,
+            values,
         }
     }
 
@@ -150,7 +160,7 @@ where
     pub fn as_borrowed(&'a self) -> ZeroMap2dBorrowed<'a, K0, K1, V> {
         ZeroMap2dBorrowed {
             keys0: self.keys0.zvl_as_borrowed(),
-            joiner: &*self.joiner,
+            joiner: &self.joiner,
             keys1: self.keys1.zvl_as_borrowed(),
             values: self.values.zvl_as_borrowed(),
         }
@@ -184,6 +194,77 @@ where
         self.keys1.zvl_reserve(additional);
         self.values.zvl_reserve(additional);
     }
+
+    /// Produce an ordered iterator over keys0, which can then be used to get an iterator
+    /// over keys1 for a particular key0.
+    ///
+    /// # Example
+    ///
+    /// Loop over all elements of a ZeroMap2d:
+    ///
+    /// ```
+    /// use zerovec::ZeroMap2d;
+    ///
+    /// let mut map: ZeroMap2d<u16, u16, str> = ZeroMap2d::new();
+    /// map.insert(&1, &1, "foo");
+    /// map.insert(&2, &3, "bar");
+    /// map.insert(&2, &4, "baz");
+    ///
+    /// let mut total_value = 0;
+    ///
+    /// for cursor in map.iter0() {
+    ///     for (key1, value) in cursor.iter1() {
+    ///         // This code runs for every (key0, key1) pair
+    ///         total_value += cursor.key0().as_unsigned_int() as usize;
+    ///         total_value += key1.as_unsigned_int() as usize;
+    ///         total_value += value.len();
+    ///     }
+    /// }
+    ///
+    /// assert_eq!(total_value, 22);
+    /// ```
+    pub fn iter0<'l>(&'l self) -> impl Iterator<Item = ZeroMap2dCursor<'l, 'a, K0, K1, V>> + 'l {
+        (0..self.keys0.zvl_len()).map(move |idx| ZeroMap2dCursor::from_cow(self, idx))
+    }
+
+    // INTERNAL ROUTINES FOLLOW //
+
+    /// Given an index into the joiner array, returns the corresponding range of keys1
+    fn get_range_for_key0_index(&self, key0_index: usize) -> Range<usize> {
+        ZeroMap2dCursor::from_cow(self, key0_index).get_range()
+    }
+
+    /// Removes key0_index from the keys0 array and the joiner array
+    fn remove_key0_index(&mut self, key0_index: usize) {
+        self.keys0.zvl_remove(key0_index);
+        self.joiner.with_mut(|v| v.remove(key0_index));
+    }
+
+    /// Shifts all joiner ranges from key0_index onward one index up
+    fn joiner_expand(&mut self, key0_index: usize) {
+        #[allow(clippy::expect_used)] // slice overflow
+        self.joiner
+            .to_mut_slice()
+            .iter_mut()
+            .skip(key0_index)
+            .for_each(|ref mut v| {
+                // TODO(#1410): Make this fallible
+                **v = v
+                    .as_unsigned_int()
+                    .checked_add(1)
+                    .expect("Attempted to add more than 2^32 elements to a ZeroMap2d")
+                    .to_unaligned()
+            })
+    }
+
+    /// Shifts all joiner ranges from key0_index onward one index down
+    fn joiner_shrink(&mut self, key0_index: usize) {
+        self.joiner
+            .to_mut_slice()
+            .iter_mut()
+            .skip(key0_index)
+            .for_each(|ref mut v| **v = (v.as_unsigned_int() - 1).to_unaligned())
+    }
 }
 
 impl<'a, K0, K1, V> ZeroMap2d<'a, K0, K1, V>
@@ -197,62 +278,33 @@ where
 {
     /// Get the value associated with `key0` and `key1`, if it exists.
     ///
+    /// For more fine-grained error handling, use [`ZeroMap2d::get0`].
+    ///
     /// ```rust
     /// use zerovec::ZeroMap2d;
-    /// use zerovec::maps::KeyError;
     ///
     /// let mut map = ZeroMap2d::new();
     /// map.insert(&1, "one", "foo");
     /// map.insert(&2, "one", "bar");
     /// map.insert(&2, "two", "baz");
-    /// assert_eq!(map.get(&1, "one"), Ok("foo"));
-    /// assert_eq!(map.get(&1, "two"), Err(KeyError::K1));
-    /// assert_eq!(map.get(&2, "one"), Ok("bar"));
-    /// assert_eq!(map.get(&2, "two"), Ok("baz"));
-    /// assert_eq!(map.get(&3, "three"), Err(KeyError::K0));
+    /// assert_eq!(map.get_2d(&1, "one"), Some("foo"));
+    /// assert_eq!(map.get_2d(&1, "two"), None);
+    /// assert_eq!(map.get_2d(&2, "one"), Some("bar"));
+    /// assert_eq!(map.get_2d(&2, "two"), Some("baz"));
+    /// assert_eq!(map.get_2d(&3, "three"), None);
     /// ```
-    pub fn get(&self, key0: &K0, key1: &K1) -> Result<&V::GetType, KeyError> {
-        let (_, range) = self.get_range_for_key0(key0).ok_or(KeyError::K0)?;
-        debug_assert!(range.start < range.end); // '<' because every key0 should have a key1
-        debug_assert!(range.end <= self.keys1.zvl_len());
-        // The above debug_assert! protects the unwrap() below
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        let index = range.start
-            + self
-                .keys1
-                .zvl_binary_search_in_range(key1, range)
-                .unwrap()
-                .map_err(|_| KeyError::K1)?;
-        // This unwrap is protected by the invariant keys1.len() == values.len(),
-        // the above debug_assert!, and the contract of zvl_binary_search_in_range.
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        Ok(self.values.zvl_get(index).unwrap())
-    }
-
-    /// Returns whether `key0` is contained in this map
-    ///
-    /// ```rust
-    /// use zerovec::ZeroMap2d;
-    ///
-    /// let mut map = ZeroMap2d::new();
-    /// map.insert(&1, "one", "foo");
-    /// map.insert(&2, "two", "bar");
-    /// assert_eq!(map.contains_key0(&1), true);
-    /// assert_eq!(map.contains_key0(&3), false);
-    /// ```
-    pub fn contains_key0(&self, key0: &K0) -> bool {
-        self.keys0.zvl_binary_search(key0).is_ok()
+    pub fn get_2d(&self, key0: &K0, key1: &K1) -> Option<&V::GetType> {
+        self.get0(key0)?.get1(key1)
     }
 
     /// Insert `value` with `key`, returning the existing value if it exists.
     ///
-    /// See example in [`Self::get()`].
+    /// See example in [`Self::get_2d()`].
     pub fn insert(&mut self, key0: &K0, key1: &K1, value: &V) -> Option<V::OwnedType> {
         let (key0_index, range) = self.get_or_insert_range_for_key0(key0);
         debug_assert!(range.start <= range.end); // '<=' because we may have inserted a new key0
         debug_assert!(range.end <= self.keys1.zvl_len());
-        // The above debug_assert! protects the unwrap() below
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+        #[allow(clippy::unwrap_used)] // by debug_assert! invariants
         let index = range.start
             + match self.keys1.zvl_binary_search_in_range(key1, range).unwrap() {
                 Ok(index) => return Some(self.values.zvl_replace(index, value)),
@@ -270,28 +322,30 @@ where
     ///
     /// ```rust
     /// use zerovec::ZeroMap2d;
-    /// use zerovec::maps::KeyError;
     ///
     /// let mut map = ZeroMap2d::new();
     /// map.insert(&1, "one", "foo");
     /// map.insert(&2, "two", "bar");
-    /// assert_eq!(map.remove(&1, "one"), Ok("foo".to_owned().into_boxed_str()));
-    /// assert_eq!(map.get(&1, "one"), Err(KeyError::K0));
-    /// assert_eq!(map.remove(&1, "one"), Err(KeyError::K0));
+    /// assert_eq!(
+    ///     map.remove(&1, "one"),
+    ///     Some("foo".to_owned().into_boxed_str())
+    /// );
+    /// assert_eq!(map.get_2d(&1, "one"), None);
+    /// assert_eq!(map.remove(&1, "one"), None);
     /// ```
-    pub fn remove(&mut self, key0: &K0, key1: &K1) -> Result<V::OwnedType, KeyError> {
-        let (key0_index, range) = self.get_range_for_key0(key0).ok_or(KeyError::K0)?;
+    pub fn remove(&mut self, key0: &K0, key1: &K1) -> Option<V::OwnedType> {
+        let key0_index = self.keys0.zvl_binary_search(key0).ok()?;
+        let range = self.get_range_for_key0_index(key0_index);
         debug_assert!(range.start < range.end); // '<' because every key0 should have a key1
         debug_assert!(range.end <= self.keys1.zvl_len());
-        // The above debug_assert! protects the unwrap() below
         let is_singleton_range = range.start + 1 == range.end;
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+        #[allow(clippy::unwrap_used)] // by debug_assert invariants
         let index = range.start
             + self
                 .keys1
                 .zvl_binary_search_in_range(key1, range)
                 .unwrap()
-                .map_err(|_| KeyError::K1)?;
+                .ok()?;
         self.keys1.zvl_remove(index);
         let removed = self.values.zvl_remove(index);
         self.joiner_shrink(key0_index);
@@ -300,15 +354,15 @@ where
         }
         #[cfg(debug_assertions)]
         self.check_invariants();
-        Ok(removed)
+        Some(removed)
     }
 
     /// Appends `value` with `key` to the end of the underlying vector, returning
     /// `key` and `value` _if it failed_. Useful for extending with an existing
     /// sorted list.
+    ///
     /// ```rust
     /// use zerovec::ZeroMap2d;
-    /// use zerovec::maps::KeyError;
     ///
     /// let mut map = ZeroMap2d::new();
     /// assert!(map.try_append(&1, "one", "uno").is_none());
@@ -320,13 +374,13 @@ where
     /// let unsuccessful = map.try_append(&2, "two", "dos");
     /// assert!(unsuccessful.is_some(), "append out of order");
     ///
-    /// assert_eq!(map.get(&1, "one"), Ok("uno"));
+    /// assert_eq!(map.get_2d(&1, "one"), Some("uno"));
     ///
     /// // contains the original value for the key: 3
-    /// assert_eq!(map.get(&3, "three"), Ok("tres"));
+    /// assert_eq!(map.get_2d(&3, "three"), Some("tres"));
     ///
     /// // not appended since it wasn't in order
-    /// assert_eq!(map.get(&2, "two"), Err(KeyError::K0));
+    /// assert_eq!(map.get_2d(&2, "two"), None);
     /// ```
     #[must_use]
     pub fn try_append<'b>(
@@ -337,17 +391,17 @@ where
     ) -> Option<(&'b K0, &'b K1, &'b V)> {
         if self.is_empty() {
             self.keys0.zvl_push(key0);
-            self.joiner.to_mut().push(1u32.to_unaligned());
+            self.joiner.with_mut(|v| v.push(1u32.to_unaligned()));
             self.keys1.zvl_push(key1);
             self.values.zvl_push(value);
             return None;
         }
 
         // The unwraps are protected by the fact that we are not empty
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+        #[allow(clippy::unwrap_used)]
         let last_key0 = self.keys0.zvl_get(self.keys0.zvl_len() - 1).unwrap();
         let key0_cmp = K0::Container::t_cmp_get(key0, last_key0);
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+        #[allow(clippy::unwrap_used)]
         let last_key1 = self.keys1.zvl_get(self.keys1.zvl_len() - 1).unwrap();
         let key1_cmp = K1::Container::t_cmp_get(key1, last_key1);
 
@@ -369,18 +423,19 @@ where
             _ => {}
         }
 
-        #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+        #[allow(clippy::expect_used)] // slice overflow
         let joiner_value = u32::try_from(self.keys1.zvl_len() + 1)
             .expect("Attempted to add more than 2^32 elements to a ZeroMap2d");
 
         // All OK to append
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+        #[allow(clippy::unwrap_used)]
         if key0_cmp == Ordering::Greater {
             self.keys0.zvl_push(key0);
-            self.joiner.to_mut().push(joiner_value.to_unaligned());
+            self.joiner
+                .with_mut(|v| v.push(joiner_value.to_unaligned()));
         } else {
             // This unwrap is protected because we are not empty
-            *self.joiner.to_mut().last_mut().unwrap() = joiner_value.to_unaligned();
+            *self.joiner.to_mut_slice().last_mut().unwrap() = joiner_value.to_unaligned();
         }
         self.keys1.zvl_push(key1);
         self.values.zvl_push(value);
@@ -391,161 +446,7 @@ where
         None
     }
 
-    /// Produce an ordered iterator over keys0.
-    pub fn iter_keys0<'b>(&'b self) -> impl Iterator<Item = &'b <K0 as ZeroMapKV<'a>>::GetType> {
-        // The unwrap is protected because we are looping over the range of indices in the vec
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        (0..self.keys0.zvl_len()).map(move |idx| self.keys0.zvl_get(idx).unwrap())
-    }
-
-    /// Produce an ordered iterator over keys1 for a particular key0, if key0 exists.
-    pub fn iter_keys1<'b>(
-        &'b self,
-        key0: &K0,
-    ) -> Option<impl Iterator<Item = &'b <K1 as ZeroMapKV<'a>>::GetType>> {
-        let (_, range) = self.get_range_for_key0(key0)?;
-        // The unwrap is protected because all ranges are valid according to invariants 1-4
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        Some(range.map(move |idx| self.keys1.zvl_get(idx).unwrap()))
-    }
-
-    /// Produce an ordered iterator over keys1 for a particular key0_index, if key0_index exists.
-    ///
-    /// This method is designed to interoperate with the enumerated key of `iter_keys0`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key0_index` is out of range.
-    ///
-    /// # Example
-    ///
-    /// Loop over all elements of a ZeroMap2d:
-    ///
-    /// ```
-    /// use zerovec::ZeroMap2d;
-    ///
-    /// let mut map: ZeroMap2d<u16, u16, str> = ZeroMap2d::new();
-    /// map.insert(&1, &1, "foo");
-    /// map.insert(&2, &3, "bar");
-    /// map.insert(&2, &4, "baz");
-    ///
-    /// let mut total_value = 0;
-    ///
-    /// let mut values_it = map.iter_values();
-    /// for (key0_index, key0) in map.iter_keys0().enumerate() {
-    ///     for key1 in map.iter_keys1_by_index(key0_index).unwrap() {
-    ///         // This code runs for every (key0, key1) pair
-    ///         total_value += key0.as_unsigned_int() as usize;
-    ///         total_value += key1.as_unsigned_int() as usize;
-    ///         total_value += values_it.next().unwrap().len();
-    ///     }
-    /// }
-    ///
-    /// assert_eq!(total_value, 22);
-    /// ```
-    pub fn iter_keys1_by_index<'b>(
-        &'b self,
-        key0_index: usize,
-    ) -> Option<impl Iterator<Item = &'b <K1 as ZeroMapKV<'a>>::GetType>> {
-        assert!(key0_index < self.keys0.zvl_len());
-        let range = self.get_range_for_key0_index(key0_index);
-        // The unwrap is protected because all ranges are valid according to invariants 1-4
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        Some(range.map(move |idx| self.keys1.zvl_get(idx).unwrap()))
-    }
-
-    /// Produce an iterator over values, ordered by the pair (key0,key1)
-    pub fn iter_values<'b>(&'b self) -> impl Iterator<Item = &'b <V as ZeroMapKV<'a>>::GetType> {
-        // The unwrap is protected because we are looping over the range of indices in the vec
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        (0..self.values.zvl_len()).map(move |idx| self.values.zvl_get(idx).unwrap())
-    }
-
     // INTERNAL ROUTINES FOLLOW //
-
-    /// Given a value that may exist in keys0, returns the corresponding range of keys1
-    fn get_range_for_key0(&self, key0: &K0) -> Option<(usize, Range<usize>)> {
-        let key0_index = self.keys0.zvl_binary_search(key0).ok()?;
-        Some((key0_index, self.get_range_for_key0_index(key0_index)))
-    }
-
-    /// Given an index into the joiner array, returns the corresponding range of keys1
-    fn get_range_for_key0_index(&self, key0_index: usize) -> Range<usize> {
-        debug_assert!(key0_index < self.joiner.len());
-        let start = if key0_index == 0 {
-            0
-        } else {
-            // The unwrap is protected by the debug_assert above
-            #[allow(clippy::unwrap_used)]
-            self.joiner.get(key0_index - 1).unwrap()
-        };
-        // The unwrap is protected by the debug_assert above
-        #[allow(clippy::unwrap_used)]
-        let limit = self.joiner.get(key0_index).unwrap();
-        (start as usize)..(limit as usize)
-    }
-
-    /// Same as `get_range_for_key0`, but creates key0 if it doesn't already exist
-    fn get_or_insert_range_for_key0(&mut self, key0: &K0) -> (usize, Range<usize>) {
-        match self.keys0.zvl_binary_search(key0) {
-            Ok(key0_index) => (key0_index, self.get_range_for_key0_index(key0_index)),
-            Err(key0_index) => {
-                // Add an entry to self.keys0 and self.joiner
-                let joiner_value = if key0_index == 0 {
-                    0
-                } else {
-                    debug_assert!(key0_index <= self.joiner.len());
-                    // The unwrap is protected by the debug_assert above and key0_index != 0
-                    #[allow(clippy::unwrap_used)]
-                    self.joiner.get(key0_index - 1).unwrap()
-                };
-                self.keys0.zvl_insert(key0_index, key0);
-                self.joiner
-                    .to_mut()
-                    .insert(key0_index, joiner_value.to_unaligned());
-                (key0_index, (joiner_value as usize)..(joiner_value as usize))
-            }
-        }
-    }
-
-    /// Removes key0_index from the keys0 array and the joiner array
-    fn remove_key0_index(&mut self, key0_index: usize) {
-        self.keys0.zvl_remove(key0_index);
-        self.joiner.to_mut().remove(key0_index);
-    }
-
-    /// Shifts all joiner ranges from key0_index onward one index up
-    fn joiner_expand(&mut self, key0_index: usize) {
-        #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        self.joiner
-            .to_mut()
-            .iter_mut()
-            .skip(key0_index)
-            .for_each(|ref mut v| {
-                // TODO(#1410): Make this fallible
-                **v = v
-                    .as_unsigned_int()
-                    .checked_add(1)
-                    .expect("Attempted to add more than 2^32 elements to a ZeroMap2d")
-                    .to_unaligned()
-            });
-    }
-
-    /// Shifts all joiner ranges from key0_index onward one index down
-    fn joiner_shrink(&mut self, key0_index: usize) {
-        #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        self.joiner
-            .to_mut()
-            .iter_mut()
-            .skip(key0_index)
-            .for_each(|ref mut v| {
-                **v = v
-                    .as_unsigned_int()
-                    .checked_sub(1)
-                    .expect("Shrink should always succeed")
-                    .to_unaligned()
-            });
-    }
 
     #[cfg(debug_assertions)]
     #[allow(clippy::unwrap_used)] // this is an assertion function
@@ -576,10 +477,103 @@ where
 
 impl<'a, K0, K1, V> ZeroMap2d<'a, K0, K1, V>
 where
-    K0: ZeroMapKV<'a> + ?Sized + Ord,
-    K1: ZeroMapKV<'a> + ?Sized + Ord,
-    V: ZeroMapKV<'a, Container = ZeroVec<'a, V>> + ?Sized,
-    V: AsULE + Copy,
+    K0: ZeroMapKV<'a> + Ord,
+    K1: ZeroMapKV<'a>,
+    V: ZeroMapKV<'a>,
+    K0: ?Sized,
+    K1: ?Sized,
+    V: ?Sized,
+{
+    /// Gets a cursor for `key0`. If `None`, then `key0` is not in the map. If `Some`,
+    /// then `key0` is in the map, and `key1` can be queried.
+    ///
+    /// ```rust
+    /// use zerovec::ZeroMap2d;
+    ///
+    /// let mut map = ZeroMap2d::new();
+    /// map.insert(&1u32, "one", "foo");
+    /// map.insert(&2, "one", "bar");
+    /// map.insert(&2, "two", "baz");
+    /// assert_eq!(map.get0(&1).unwrap().get1("one").unwrap(), "foo");
+    /// assert_eq!(map.get0(&1).unwrap().get1("two"), None);
+    /// assert_eq!(map.get0(&2).unwrap().get1("one").unwrap(), "bar");
+    /// assert_eq!(map.get0(&2).unwrap().get1("two").unwrap(), "baz");
+    /// assert_eq!(map.get0(&3), None);
+    /// ```
+    #[inline]
+    pub fn get0<'l>(&'l self, key0: &K0) -> Option<ZeroMap2dCursor<'l, 'a, K0, K1, V>> {
+        let key0_index = self.keys0.zvl_binary_search(key0).ok()?;
+        Some(ZeroMap2dCursor::from_cow(self, key0_index))
+    }
+
+    /// Binary search the map for `key0`, returning a cursor.
+    ///
+    /// ```rust
+    /// use zerovec::maps::ZeroMap2dBorrowed;
+    /// use zerovec::ZeroMap2d;
+    ///
+    /// let mut map = ZeroMap2d::new();
+    /// map.insert(&1, "one", "foo");
+    /// map.insert(&2, "two", "bar");
+    /// assert!(matches!(map.get0_by(|probe| probe.cmp(&1)), Some(_)));
+    /// assert!(matches!(map.get0_by(|probe| probe.cmp(&3)), None));
+    /// ```
+    pub fn get0_by<'l>(
+        &'l self,
+        predicate: impl FnMut(&K0) -> Ordering,
+    ) -> Option<ZeroMap2dCursor<'l, 'a, K0, K1, V>> {
+        let key0_index = self.keys0.zvl_binary_search_by(predicate).ok()?;
+        Some(ZeroMap2dCursor::from_cow(self, key0_index))
+    }
+
+    /// Returns whether `key0` is contained in this map
+    ///
+    /// ```rust
+    /// use zerovec::ZeroMap2d;
+    ///
+    /// let mut map = ZeroMap2d::new();
+    /// map.insert(&1, "one", "foo");
+    /// map.insert(&2, "two", "bar");
+    /// assert!(map.contains_key0(&1));
+    /// assert!(!map.contains_key0(&3));
+    /// ```
+    pub fn contains_key0(&self, key0: &K0) -> bool {
+        self.keys0.zvl_binary_search(key0).is_ok()
+    }
+
+    // INTERNAL ROUTINES FOLLOW //
+
+    /// Same as `get_range_for_key0`, but creates key0 if it doesn't already exist
+    fn get_or_insert_range_for_key0(&mut self, key0: &K0) -> (usize, Range<usize>) {
+        match self.keys0.zvl_binary_search(key0) {
+            Ok(key0_index) => (key0_index, self.get_range_for_key0_index(key0_index)),
+            Err(key0_index) => {
+                // Add an entry to self.keys0 and self.joiner
+                let joiner_value = if key0_index == 0 {
+                    0
+                } else {
+                    debug_assert!(key0_index <= self.joiner.len());
+                    // The unwrap is protected by the debug_assert above and key0_index != 0
+                    #[allow(clippy::unwrap_used)]
+                    self.joiner.get(key0_index - 1).unwrap()
+                };
+                self.keys0.zvl_insert(key0_index, key0);
+                self.joiner
+                    .with_mut(|v| v.insert(key0_index, joiner_value.to_unaligned()));
+                (key0_index, (joiner_value as usize)..(joiner_value as usize))
+            }
+        }
+    }
+}
+
+impl<'a, K0, K1, V> ZeroMap2d<'a, K0, K1, V>
+where
+    K0: ZeroMapKV<'a> + Ord,
+    K1: ZeroMapKV<'a> + Ord,
+    V: ZeroMapKV<'a>,
+    V: Copy,
+    K0: ?Sized,
+    K1: ?Sized,
 {
     /// For cases when `V` is fixed-size, obtain a direct copy of `V` instead of `V::ULE`
     ///
@@ -587,26 +581,16 @@ where
     ///
     /// ```
     /// # use zerovec::ZeroMap2d;
-    /// let mut map: ZeroMap2d::<u16, u16, u16> = ZeroMap2d::new();
+    /// let mut map: ZeroMap2d<u16, u16, u16> = ZeroMap2d::new();
     /// map.insert(&1, &2, &3);
     /// map.insert(&1, &4, &5);
     /// map.insert(&6, &7, &8);
     ///
-    /// assert_eq!(map.get_copied(&6, &7), Some(8));
+    /// assert_eq!(map.get_copied_2d(&6, &7), Some(8));
     /// ```
-    pub fn get_copied(&self, key0: &K0, key1: &K1) -> Option<V> {
-        let (_, range) = self.get_range_for_key0(key0)?;
-        debug_assert!(range.start < range.end); // '<' because every key0 should have a key1
-        debug_assert!(range.end <= self.keys1.zvl_len());
-        // The above debug_assert! protects the unwrap() below
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        let index = range.start
-            + self
-                .keys1
-                .zvl_binary_search_in_range(key1, range)
-                .unwrap()
-                .ok()?;
-        self.values.get(index)
+    #[inline]
+    pub fn get_copied_2d(&self, key0: &K0, key1: &K1) -> Option<V> {
+        self.get0(key0)?.get1_copied(key1)
     }
 }
 
@@ -725,28 +709,31 @@ mod test {
     fn stress_test() {
         let mut zm2d = ZeroMap2d::<u16, str, str>::new();
 
-        assert_eq!(format!("{:?}", zm2d), "ZeroMap2d { keys0: ZeroVec::Borrowed([]), joiner: ZeroVec::Borrowed([]), keys1: [], values: [] }");
-        assert_eq!(zm2d.get(&0, ""), Err(KeyError::K0));
+        assert_eq!(
+            format!("{zm2d:?}"),
+            "ZeroMap2d { keys0: ZeroVec([]), joiner: ZeroVec([]), keys1: [], values: [] }"
+        );
+        assert_eq!(zm2d.get0(&0), None);
 
         let result = zm2d.try_append(&3, "ccc", "CCC");
         assert!(matches!(result, None));
 
-        assert_eq!(format!("{:?}", zm2d), "ZeroMap2d { keys0: ZeroVec::Owned([3]), joiner: ZeroVec::Owned([1]), keys1: [\"ccc\"], values: [\"CCC\"] }");
-        assert_eq!(zm2d.get(&0, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&3, ""), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&3, "ccc"), Ok("CCC"));
-        assert_eq!(zm2d.get(&99, ""), Err(KeyError::K0));
+        assert_eq!(format!("{zm2d:?}"), "ZeroMap2d { keys0: ZeroVec([3]), joiner: ZeroVec([1]), keys1: [\"ccc\"], values: [\"CCC\"] }");
+        assert_eq!(zm2d.get0(&0), None);
+        assert_eq!(zm2d.get0(&3).unwrap().get1(""), None);
+        assert_eq!(zm2d.get_2d(&3, "ccc"), Some("CCC"));
+        assert_eq!(zm2d.get0(&99), None);
 
         let result = zm2d.try_append(&3, "eee", "EEE");
         assert!(matches!(result, None));
 
-        assert_eq!(format!("{:?}", zm2d), "ZeroMap2d { keys0: ZeroVec::Owned([3]), joiner: ZeroVec::Owned([2]), keys1: [\"ccc\", \"eee\"], values: [\"CCC\", \"EEE\"] }");
-        assert_eq!(zm2d.get(&0, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&3, ""), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&3, "ccc"), Ok("CCC"));
-        assert_eq!(zm2d.get(&3, "eee"), Ok("EEE"));
-        assert_eq!(zm2d.get(&3, "five"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&99, ""), Err(KeyError::K0));
+        assert_eq!(format!("{zm2d:?}"), "ZeroMap2d { keys0: ZeroVec([3]), joiner: ZeroVec([2]), keys1: [\"ccc\", \"eee\"], values: [\"CCC\", \"EEE\"] }");
+        assert_eq!(zm2d.get0(&0), None);
+        assert_eq!(zm2d.get0(&3).unwrap().get1(""), None);
+        assert_eq!(zm2d.get_2d(&3, "ccc"), Some("CCC"));
+        assert_eq!(zm2d.get_2d(&3, "eee"), Some("EEE"));
+        assert_eq!(zm2d.get0(&3).unwrap().get1("five"), None);
+        assert_eq!(zm2d.get0(&99), None);
 
         // Out of order
         let result = zm2d.try_append(&3, "ddd", "DD0");
@@ -764,30 +751,30 @@ mod test {
         let result = zm2d.try_append(&9, "yyy", "YYY");
         assert!(matches!(result, None));
 
-        assert_eq!(format!("{:?}", zm2d), "ZeroMap2d { keys0: ZeroVec::Owned([3, 5, 7, 9]), joiner: ZeroVec::Owned([2, 3, 6, 7]), keys1: [\"ccc\", \"eee\", \"ddd\", \"ddd\", \"eee\", \"www\", \"yyy\"], values: [\"CCC\", \"EEE\", \"DD1\", \"DD2\", \"EEE\", \"WWW\", \"YYY\"] }");
-        assert_eq!(zm2d.get(&0, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&3, ""), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&3, "ccc"), Ok("CCC"));
-        assert_eq!(zm2d.get(&3, "eee"), Ok("EEE"));
-        assert_eq!(zm2d.get(&3, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&4, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&5, "aaa"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&5, "ddd"), Ok("DD1"));
-        assert_eq!(zm2d.get(&5, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&6, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&7, "aaa"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&7, "ddd"), Ok("DD2"));
-        assert_eq!(zm2d.get(&7, "eee"), Ok("EEE"));
-        assert_eq!(zm2d.get(&7, "www"), Ok("WWW"));
-        assert_eq!(zm2d.get(&7, "yyy"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&7, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&8, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&9, "aaa"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&9, "www"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&9, "yyy"), Ok("YYY"));
-        assert_eq!(zm2d.get(&9, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&10, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&99, ""), Err(KeyError::K0));
+        assert_eq!(format!("{zm2d:?}"), "ZeroMap2d { keys0: ZeroVec([3, 5, 7, 9]), joiner: ZeroVec([2, 3, 6, 7]), keys1: [\"ccc\", \"eee\", \"ddd\", \"ddd\", \"eee\", \"www\", \"yyy\"], values: [\"CCC\", \"EEE\", \"DD1\", \"DD2\", \"EEE\", \"WWW\", \"YYY\"] }");
+        assert_eq!(zm2d.get0(&0), None);
+        assert_eq!(zm2d.get0(&3).unwrap().get1(""), None);
+        assert_eq!(zm2d.get_2d(&3, "ccc"), Some("CCC"));
+        assert_eq!(zm2d.get_2d(&3, "eee"), Some("EEE"));
+        assert_eq!(zm2d.get0(&3).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&4), None);
+        assert_eq!(zm2d.get0(&5).unwrap().get1("aaa"), None);
+        assert_eq!(zm2d.get_2d(&5, "ddd"), Some("DD1"));
+        assert_eq!(zm2d.get0(&5).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&6), None);
+        assert_eq!(zm2d.get0(&7).unwrap().get1("aaa"), None);
+        assert_eq!(zm2d.get_2d(&7, "ddd"), Some("DD2"));
+        assert_eq!(zm2d.get_2d(&7, "eee"), Some("EEE"));
+        assert_eq!(zm2d.get_2d(&7, "www"), Some("WWW"));
+        assert_eq!(zm2d.get0(&7).unwrap().get1("yyy"), None);
+        assert_eq!(zm2d.get0(&7).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&8), None);
+        assert_eq!(zm2d.get0(&9).unwrap().get1("aaa"), None);
+        assert_eq!(zm2d.get0(&9).unwrap().get1("www"), None);
+        assert_eq!(zm2d.get_2d(&9, "yyy"), Some("YYY"));
+        assert_eq!(zm2d.get0(&9).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&10), None);
+        assert_eq!(zm2d.get0(&99), None);
 
         // Insert some elements
         zm2d.insert(&3, "mmm", "MM0");
@@ -795,46 +782,46 @@ mod test {
         zm2d.insert(&6, "mmm", "MM1");
         zm2d.insert(&6, "nnn", "NNN");
 
-        assert_eq!(format!("{:?}", zm2d), "ZeroMap2d { keys0: ZeroVec::Owned([3, 5, 6, 7, 9]), joiner: ZeroVec::Owned([3, 4, 7, 10, 11]), keys1: [\"ccc\", \"eee\", \"mmm\", \"ddd\", \"ddd\", \"mmm\", \"nnn\", \"ddd\", \"eee\", \"www\", \"yyy\"], values: [\"CCC\", \"EEE\", \"MM0\", \"DD1\", \"DD3\", \"MM1\", \"NNN\", \"DD2\", \"EEE\", \"WWW\", \"YYY\"] }");
-        assert_eq!(zm2d.get(&0, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&3, ""), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&3, "ccc"), Ok("CCC"));
-        assert_eq!(zm2d.get(&3, "eee"), Ok("EEE"));
-        assert_eq!(zm2d.get(&3, "mmm"), Ok("MM0"));
-        assert_eq!(zm2d.get(&3, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&4, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&5, "aaa"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&5, "ddd"), Ok("DD1"));
-        assert_eq!(zm2d.get(&5, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&6, "aaa"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&6, "ddd"), Ok("DD3"));
-        assert_eq!(zm2d.get(&6, "mmm"), Ok("MM1"));
-        assert_eq!(zm2d.get(&6, "nnn"), Ok("NNN"));
-        assert_eq!(zm2d.get(&6, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&7, "aaa"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&7, "ddd"), Ok("DD2"));
-        assert_eq!(zm2d.get(&7, "eee"), Ok("EEE"));
-        assert_eq!(zm2d.get(&7, "www"), Ok("WWW"));
-        assert_eq!(zm2d.get(&7, "yyy"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&7, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&8, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&9, "aaa"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&9, "www"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&9, "yyy"), Ok("YYY"));
-        assert_eq!(zm2d.get(&9, "zzz"), Err(KeyError::K1));
-        assert_eq!(zm2d.get(&10, ""), Err(KeyError::K0));
-        assert_eq!(zm2d.get(&99, ""), Err(KeyError::K0));
+        assert_eq!(format!("{zm2d:?}"), "ZeroMap2d { keys0: ZeroVec([3, 5, 6, 7, 9]), joiner: ZeroVec([3, 4, 7, 10, 11]), keys1: [\"ccc\", \"eee\", \"mmm\", \"ddd\", \"ddd\", \"mmm\", \"nnn\", \"ddd\", \"eee\", \"www\", \"yyy\"], values: [\"CCC\", \"EEE\", \"MM0\", \"DD1\", \"DD3\", \"MM1\", \"NNN\", \"DD2\", \"EEE\", \"WWW\", \"YYY\"] }");
+        assert_eq!(zm2d.get0(&0), None);
+        assert_eq!(zm2d.get0(&3).unwrap().get1(""), None);
+        assert_eq!(zm2d.get_2d(&3, "ccc"), Some("CCC"));
+        assert_eq!(zm2d.get_2d(&3, "eee"), Some("EEE"));
+        assert_eq!(zm2d.get_2d(&3, "mmm"), Some("MM0"));
+        assert_eq!(zm2d.get0(&3).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&4), None);
+        assert_eq!(zm2d.get0(&5).unwrap().get1("aaa"), None);
+        assert_eq!(zm2d.get_2d(&5, "ddd"), Some("DD1"));
+        assert_eq!(zm2d.get0(&5).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&6).unwrap().get1("aaa"), None);
+        assert_eq!(zm2d.get_2d(&6, "ddd"), Some("DD3"));
+        assert_eq!(zm2d.get_2d(&6, "mmm"), Some("MM1"));
+        assert_eq!(zm2d.get_2d(&6, "nnn"), Some("NNN"));
+        assert_eq!(zm2d.get0(&6).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&7).unwrap().get1("aaa"), None);
+        assert_eq!(zm2d.get_2d(&7, "ddd"), Some("DD2"));
+        assert_eq!(zm2d.get_2d(&7, "eee"), Some("EEE"));
+        assert_eq!(zm2d.get_2d(&7, "www"), Some("WWW"));
+        assert_eq!(zm2d.get0(&7).unwrap().get1("yyy"), None);
+        assert_eq!(zm2d.get0(&7).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&8), None);
+        assert_eq!(zm2d.get0(&9).unwrap().get1("aaa"), None);
+        assert_eq!(zm2d.get0(&9).unwrap().get1("www"), None);
+        assert_eq!(zm2d.get_2d(&9, "yyy"), Some("YYY"));
+        assert_eq!(zm2d.get0(&9).unwrap().get1("zzz"), None);
+        assert_eq!(zm2d.get0(&10), None);
+        assert_eq!(zm2d.get0(&99), None);
 
         // Remove some elements
         let result = zm2d.remove(&3, "ccc"); // first element
-        assert_eq!(result, Ok(String::from("CCC").into_boxed_str()));
+        assert_eq!(result.as_deref(), Some("CCC"));
         let result = zm2d.remove(&3, "mmm"); // middle element
-        assert_eq!(result, Ok(String::from("MM0").into_boxed_str()));
+        assert_eq!(result.as_deref(), Some("MM0"));
         let result = zm2d.remove(&5, "ddd"); // singleton K0
-        assert_eq!(result, Ok(String::from("DD1").into_boxed_str()));
+        assert_eq!(result.as_deref(), Some("DD1"));
         let result = zm2d.remove(&9, "yyy"); // last element
-        assert_eq!(result, Ok(String::from("YYY").into_boxed_str()));
+        assert_eq!(result.as_deref(), Some("YYY"));
 
-        assert_eq!(format!("{:?}", zm2d), "ZeroMap2d { keys0: ZeroVec::Owned([3, 6, 7]), joiner: ZeroVec::Owned([1, 4, 7]), keys1: [\"eee\", \"ddd\", \"mmm\", \"nnn\", \"ddd\", \"eee\", \"www\"], values: [\"EEE\", \"DD3\", \"MM1\", \"NNN\", \"DD2\", \"EEE\", \"WWW\"] }");
+        assert_eq!(format!("{zm2d:?}"), "ZeroMap2d { keys0: ZeroVec([3, 6, 7]), joiner: ZeroVec([1, 4, 7]), keys1: [\"eee\", \"ddd\", \"mmm\", \"nnn\", \"ddd\", \"eee\", \"www\"], values: [\"EEE\", \"DD3\", \"MM1\", \"NNN\", \"DD2\", \"EEE\", \"WWW\"] }");
     }
 }

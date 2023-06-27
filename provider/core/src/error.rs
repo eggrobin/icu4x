@@ -2,7 +2,9 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
+use crate::buf::BufferFormat;
 use crate::prelude::*;
+use core::fmt;
 use displaydoc::Display;
 
 /// A list specifying general categories of data provider error.
@@ -14,31 +16,19 @@ use displaydoc::Display;
 pub enum DataErrorKind {
     /// No data for the provided resource key.
     #[displaydoc("Missing data for key")]
-    MissingResourceKey,
-
-    /// There is data for the key, but not for this particular variant.
-    #[displaydoc("Missing data for variant")]
-    MissingVariant,
+    MissingDataKey,
 
     /// There is data for the key, but not for this particular locale.
     #[displaydoc("Missing data for locale")]
     MissingLocale,
 
-    /// There is data for the key, but not for this particular variant and/or locale.
-    #[displaydoc("Missing data for variant or locale")]
-    MissingResourceOptions,
-
-    /// The request should include a variant field.
-    #[displaydoc("Request needs a variant field")]
-    NeedsVariant,
-
     /// The request should include a locale.
     #[displaydoc("Request needs a locale")]
     NeedsLocale,
 
-    /// The request should not contain a variant and/or locale.
-    #[displaydoc("Request has extraneous information")]
-    ExtraneousResourceOptions,
+    /// The request should not contain a locale.
+    #[displaydoc("Request has an extraneous locale")]
+    ExtraneousLocale,
 
     /// The resource was blocked by a filter. The resource may or may not be available.
     #[displaydoc("Resource blocked by filter")]
@@ -52,12 +42,6 @@ pub enum DataErrorKind {
     /// The payload is missing. This is usually caused by a previous error.
     #[displaydoc("Missing payload")]
     MissingPayload,
-
-    /// An error involving a lock or mutex occurred.
-    ///
-    /// Check debug logs for potentially more information.
-    #[displaydoc("Mutex error")]
-    Mutex,
 
     /// A data provider object was given to an operation in an invalid state.
     #[displaydoc("Invalid state")]
@@ -74,9 +58,15 @@ pub enum DataErrorKind {
     #[cfg(feature = "std")]
     Io(std::io::ErrorKind),
 
+    /// An unspecified data source containing the required data is unavailable.
     #[displaydoc("Missing source data")]
     #[cfg(feature = "datagen")]
     MissingSourceData,
+
+    /// An error indicating that the desired buffer format is not available. This usually
+    /// means that a required Cargo feature was not enabled
+    #[displaydoc("Unavailable buffer format: {0:?} (does icu_provider need to be compiled with an additional Cargo feature?)")]
+    UnavailableBufferFormat(BufferFormat),
 }
 
 /// The error type for ICU4X data provider operations.
@@ -85,13 +75,13 @@ pub enum DataErrorKind {
 ///
 /// # Example
 ///
-/// Create a NeedsVariant error and attach a data request for context:
+/// Create a NeedsLocale error and attach a data request for context:
 ///
 /// ```no_run
 /// # use icu_provider::prelude::*;
-/// let key: ResourceKey = unimplemented!();
-/// let req: &DataRequest = unimplemented!();
-/// DataErrorKind::NeedsVariant.with_req(key, req);
+/// let key: DataKey = unimplemented!();
+/// let req: DataRequest = unimplemented!();
+/// DataErrorKind::NeedsLocale.with_req(key, req);
 /// ```
 ///
 /// Create a named custom error:
@@ -107,23 +97,26 @@ pub struct DataError {
     pub kind: DataErrorKind,
 
     /// The data key of the request, if available.
-    pub key: Option<ResourceKey>,
+    pub key: Option<DataKey>,
 
     /// Additional context, if available.
     pub str_context: Option<&'static str>,
+
+    /// Whether this error was created in silent mode to not log.
+    pub silent: bool,
 }
 
-impl core::fmt::Display for DataError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl fmt::Display for DataError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ICU4X data error")?;
         if self.kind != DataErrorKind::Custom {
             write!(f, ": {}", self.kind)?;
         }
         if let Some(key) = self.key {
-            write!(f, " (key: {})", key)?;
+            write!(f, " (key: {key})")?;
         }
         if let Some(str_context) = self.str_context {
-            write!(f, ": {}", str_context)?;
+            write!(f, ": {str_context}")?;
         }
         Ok(())
     }
@@ -139,12 +132,13 @@ impl DataErrorKind {
             kind: self,
             key: None,
             str_context: None,
+            silent: false,
         }
     }
 
     /// Creates a DataError with a resource key context.
     #[inline]
-    pub const fn with_key(self, key: ResourceKey) -> DataError {
+    pub const fn with_key(self, key: DataKey) -> DataError {
         self.into_error().with_key(key)
     }
 
@@ -162,7 +156,7 @@ impl DataErrorKind {
 
     /// Creates a DataError with a request context.
     #[inline]
-    pub fn with_req(self, key: ResourceKey, req: &DataRequest) -> DataError {
+    pub fn with_req(self, key: DataKey, req: DataRequest) -> DataError {
         self.into_error().with_req(key, req)
     }
 }
@@ -175,16 +169,18 @@ impl DataError {
             kind: DataErrorKind::Custom,
             key: None,
             str_context: Some(str_context),
+            silent: false,
         }
     }
 
     /// Sets the resource key of a DataError, returning a modified error.
     #[inline]
-    pub const fn with_key(self, key: ResourceKey) -> Self {
+    pub const fn with_key(self, key: DataKey) -> Self {
         Self {
             kind: self.kind,
             key: Some(key),
             str_context: self.str_context,
+            silent: self.silent,
         }
     }
 
@@ -195,6 +191,7 @@ impl DataError {
             kind: self.kind,
             key: self.key,
             str_context: Some(context),
+            silent: self.silent,
         }
     }
 
@@ -206,13 +203,16 @@ impl DataError {
 
     /// Logs the data error with the given request, returning an error containing the resource key.
     ///
-    /// If the "log_error_context" feature is enabled, this logs the whole request. Either way,
+    /// If the "log_error_context" Cargo feature is enabled, this logs the whole request. Either way,
     /// it returns an error with the resource key portion of the request as context.
     #[cfg_attr(not(feature = "log_error_context"), allow(unused_variables))]
-    pub fn with_req(self, key: ResourceKey, req: &DataRequest) -> Self {
-        // Don't write out a log for MissingResourceKey since there is no context to add
+    pub fn with_req(mut self, key: DataKey, req: DataRequest) -> Self {
+        if req.metadata.silent {
+            self.silent = true;
+        }
+        // Don't write out a log for MissingDataKey since there is no context to add
         #[cfg(feature = "log_error_context")]
-        if self.kind != DataErrorKind::MissingResourceKey {
+        if !self.silent && self.kind != DataErrorKind::MissingDataKey {
             log::warn!("{} (key: {}, request: {})", self, key, req);
         }
         self.with_key(key)
@@ -220,50 +220,43 @@ impl DataError {
 
     /// Logs the data error with the given context, then return self.
     ///
-    /// This does not modify the error, but if the "log_error_context" feature is enabled,
+    /// This does not modify the error, but if the "log_error_context" Cargo feature is enabled,
     /// it will print out the context.
     #[cfg(feature = "std")]
     #[cfg_attr(not(feature = "log_error_context"), allow(unused_variables))]
-    pub fn with_path<P: AsRef<std::path::Path> + ?Sized>(self, path: &P) -> Self {
+    pub fn with_path_context<P: AsRef<std::path::Path> + ?Sized>(self, path: &P) -> Self {
         #[cfg(feature = "log_error_context")]
-        log::warn!("{} (path: {:?})", self, path.as_ref());
+        if !self.silent {
+            log::warn!("{} (path: {:?})", self, path.as_ref());
+        }
         self
     }
 
     /// Logs the data error with the given context, then return self.
     ///
-    /// This does not modify the error, but if the "log_error_context" feature is enabled,
+    /// This does not modify the error, but if the "log_error_context" Cargo feature is enabled,
     /// it will print out the context.
-    #[cfg(feature = "std")]
     #[cfg_attr(not(feature = "log_error_context"), allow(unused_variables))]
     #[inline]
-    pub fn with_error_context<E: std::error::Error + ?Sized>(self, err: &E) -> Self {
+    pub fn with_display_context<D: fmt::Display + ?Sized>(self, context: &D) -> Self {
         #[cfg(feature = "log_error_context")]
-        log::warn!("{}: {}", self, err);
+        if !self.silent {
+            log::warn!("{}: {}", self, context);
+        }
         self
     }
 
     /// Logs the data error with the given context, then return self.
     ///
-    /// This does not modify the error, but if the "log_error_context" feature is enabled,
+    /// This does not modify the error, but if the "log_error_context" Cargo feature is enabled,
     /// it will print out the context.
     #[cfg_attr(not(feature = "log_error_context"), allow(unused_variables))]
     #[inline]
-    pub fn with_display_context<D: core::fmt::Display + ?Sized>(self, context: &D) -> Self {
+    pub fn with_debug_context<D: fmt::Debug + ?Sized>(self, context: &D) -> Self {
         #[cfg(feature = "log_error_context")]
-        log::warn!("{}: {}", self, context);
-        self
-    }
-
-    /// Logs the data error with the given context, then return self.
-    ///
-    /// This does not modify the error, but if the "log_error_context" feature is enabled,
-    /// it will print out the context.
-    #[cfg_attr(not(feature = "log_error_context"), allow(unused_variables))]
-    #[inline]
-    pub fn with_debug_context<D: core::fmt::Debug + ?Sized>(self, context: &D) -> Self {
-        #[cfg(feature = "log_error_context")]
-        log::warn!("{}: {:?}", self, context);
+        if !self.silent {
+            log::warn!("{}: {:?}", self, context);
+        }
         self
     }
 
@@ -273,6 +266,7 @@ impl DataError {
             kind: DataErrorKind::MismatchedType(core::any::type_name::<T>()),
             key: None,
             str_context: None,
+            silent: false,
         }
     }
 }
@@ -280,41 +274,11 @@ impl DataError {
 #[cfg(feature = "std")]
 impl std::error::Error for DataError {}
 
-#[cfg(feature = "serde")]
-impl From<crate::serde::Error> for DataError {
-    #[cfg_attr(not(feature = "log_error_context"), allow(unused_variables))]
-    fn from(e: crate::serde::Error) -> Self {
-        #[cfg(feature = "log_error_context")]
-        log::warn!("Serde error: {}", e);
-        DataError::custom("Serde error")
-    }
-}
-
-#[cfg(feature = "postcard")]
-impl From<postcard::Error> for DataError {
-    #[cfg_attr(not(feature = "log_error_context"), allow(unused_variables))]
-    fn from(e: postcard::Error) -> Self {
-        #[cfg(feature = "log_error_context")]
-        log::warn!("Postcard error: {}", e);
-        DataError::custom("Postcard error")
-    }
-}
-
 #[cfg(feature = "std")]
 impl From<std::io::Error> for DataError {
     fn from(e: std::io::Error) -> Self {
         #[cfg(feature = "log_error_context")]
         log::warn!("I/O error: {}", e);
         DataErrorKind::Io(e.kind()).into_error()
-    }
-}
-
-#[cfg(feature = "std")]
-impl<T> From<std::sync::PoisonError<T>> for DataError {
-    #[cfg_attr(not(feature = "log_error_context"), allow(unused_variables))]
-    fn from(e: std::sync::PoisonError<T>) -> Self {
-        #[cfg(feature = "log_error_context")]
-        log::warn!("Poison error: {}", e);
-        DataErrorKind::Mutex.into_error()
     }
 }

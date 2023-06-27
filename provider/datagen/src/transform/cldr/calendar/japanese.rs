@@ -2,71 +2,32 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use crate::error::DatagenError;
 use crate::transform::cldr::cldr_serde;
-use crate::transform::cldr::reader::open_reader;
-use crate::SourceData;
 use icu_calendar::provider::*;
 use icu_locid::langid;
-use icu_provider::datagen::IterableResourceProvider;
+use icu_provider::datagen::IterableDataProvider;
 use icu_provider::prelude::*;
 use std::collections::BTreeMap;
 use std::env;
 use std::str::FromStr;
+use tinystr::tinystr;
 use tinystr::TinyStr16;
-use zerovec::ule::AsULE;
-use zerovec::ZeroVec;
 
 const JAPANESE_FILE: &str = include_str!("./snapshot-japanese@1.json");
 
-/// A data provider reading from CLDR JSON Japanese calendar files.
-#[derive(Debug)]
-pub struct JapaneseErasProvider {
-    source: SourceData,
-}
-
-impl From<&SourceData> for JapaneseErasProvider {
-    fn from(source: &SourceData) -> Self {
-        Self {
-            source: source.clone(),
-        }
-    }
-}
-
-impl ResourceProvider<JapaneseErasV1Marker> for JapaneseErasProvider {
-    fn load_resource(
+impl crate::DatagenProvider {
+    fn load_japanese_eras(
         &self,
-        req: &DataRequest,
+        japanext: bool,
     ) -> Result<DataResponse<JapaneseErasV1Marker>, DataError> {
-        if !req.options.is_empty() {
-            return Err(DataErrorKind::ExtraneousResourceOptions.into_error());
-        }
-
         // The era codes depend on the Latin romanizations of the eras, found
         // in the `en` locale. We load this data to construct era codes but
         // actual user code only needs to load the data for the locales it cares about.
-        let era_names_path = self
+        let era_name_map = &self
             .source
-            .get_cldr_paths()?
-            .cldr_dates("japanese")
-            .join("main")
-            .join("en")
-            .join("ca-japanese.json");
-        let era_dates_path = self
-            .source
-            .get_cldr_paths()?
-            .cldr_core()
-            .join("supplemental")
-            .join("calendarData.json");
-
-        let era_names: cldr_serde::ca::Resource =
-            serde_json::from_reader(open_reader(&era_names_path)?)
-                .map_err(|e| DatagenError::from((e, era_names_path)))?;
-        let era_dates: cldr_serde::japanese::Resource =
-            serde_json::from_reader(open_reader(&era_dates_path)?)
-                .map_err(|e| DatagenError::from((e, era_dates_path)))?;
-
-        let era_name_map = &era_names
+            .cldr()?
+            .dates("japanese")
+            .read_and_parse::<cldr_serde::ca::Resource>(&langid!("en"), "ca-japanese.json")?
             .main
             .0
             .get(&langid!("en"))
@@ -81,64 +42,56 @@ impl ResourceProvider<JapaneseErasV1Marker> for JapaneseErasProvider {
             ))?
             .eras
             .abbr;
-        let era_dates_map = &era_dates.supplemental.calendar_data.japanese.eras;
 
-        let mut ret = JapaneseErasV1 {
-            dates_to_eras: ZeroVec::new(),
-            dates_to_historical_eras: ZeroVec::new(),
-        };
+        let era_dates_map = &self
+            .source
+            .cldr()?
+            .core()
+            .read_and_parse::<cldr_serde::japanese::Resource>("supplemental/calendarData.json")?
+            .supplemental
+            .calendar_data
+            .japanese
+            .eras;
 
-        for (era_id, era_name) in era_name_map.iter() {
+        let mut dates_to_eras = BTreeMap::new();
+
+        for (era_id, date) in era_dates_map.iter() {
             // These don't exist but may in the future
             if era_id.contains("variant") {
                 continue;
             }
-            let date = &era_dates_map
-                .get(era_id)
-                .ok_or_else(|| {
-                    DatagenError::Custom(
-                        format!(
-                            "calendarData.json contains no data for japanese era index {}",
-                            era_id
-                        ),
-                        None,
+
+            if era_id == "-1" || era_id == "-2" {
+                // These eras are handled in code
+                continue;
+            }
+
+            let start_date =
+                EraStartDate::from_str(date.start.as_ref().unwrap()).map_err(|_| {
+                    DataError::custom(
+                        "calendarData.json contains unparseable data for a japanese era",
                     )
-                })?
-                .start;
+                    .with_display_context(&format!("era index {era_id}"))
+                })?;
 
-            let start_date = EraStartDate::from_str(date).map_err(|_| {
-                DatagenError::Custom(
-                    format!(
-                        "calendarData.json contains unparseable data for japanese era index {}",
-                        era_id
-                    ),
-                    None,
-                )
-            })?;
+            if start_date.year >= 1868 || japanext {
+                let code = era_to_code(era_name_map.get(era_id).unwrap(), start_date.year)
+                    .map_err(|e| DataError::custom("Era codes").with_display_context(&e))?;
 
-            let code = era_to_code(era_name, start_date.year)
-                .map_err(|e| DatagenError::Custom(e, None))?;
-            if start_date.year >= 1868 {
-                ret.dates_to_eras
-                    .to_mut()
-                    .push((start_date, code).to_unaligned());
-            } else {
-                ret.dates_to_historical_eras
-                    .to_mut()
-                    .push((start_date, code).to_unaligned());
+                dates_to_eras.insert(start_date, code);
             }
         }
 
-        ret.dates_to_eras.to_mut().sort_unstable();
-        ret.dates_to_historical_eras.to_mut().sort_unstable();
+        let ret = JapaneseErasV1 {
+            dates_to_eras: dates_to_eras.into_iter().collect(),
+        };
 
         // Integrity check
         //
         // Era code generation relies on the English era data which could in theory change; we have an integrity check
         // to catch such cases. It is relatively rare for a new era to be added, and in those cases the integrity check can
         // be disabled when generating new data.
-        if env::var("ICU4X_SKIP_JAPANESE_INTEGRITY_CHECK").is_err() {
-            #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+        if japanext && env::var("ICU4X_SKIP_JAPANESE_INTEGRITY_CHECK").is_err() {
             let snapshot: JapaneseErasV1 = serde_json::from_str(JAPANESE_FILE)
                 .expect("Failed to parse the precached snapshot-japanese@1.json. This is a bug.");
 
@@ -164,6 +117,27 @@ impl ResourceProvider<JapaneseErasV1Marker> for JapaneseErasProvider {
     }
 }
 
+impl DataProvider<JapaneseErasV1Marker> for crate::DatagenProvider {
+    fn load(&self, req: DataRequest) -> Result<DataResponse<JapaneseErasV1Marker>, DataError> {
+        self.check_req::<JapaneseErasV1Marker>(req)?;
+        self.load_japanese_eras(false)
+    }
+}
+
+impl DataProvider<JapaneseExtendedErasV1Marker> for crate::DatagenProvider {
+    fn load(
+        &self,
+        req: DataRequest,
+    ) -> Result<DataResponse<JapaneseExtendedErasV1Marker>, DataError> {
+        self.check_req::<JapaneseExtendedErasV1Marker>(req)?;
+        let DataResponse { metadata, payload } = self.load_japanese_eras(true)?;
+        Ok(DataResponse {
+            metadata,
+            payload: payload.map(|p| p.cast()),
+        })
+    }
+}
+
 /// See https://docs.google.com/document/d/1vMVhMHgCYRyx2gmwEfKRyXWDg_lrQadd8iMVU9uPK1o/edit?usp=chrome_omnibox&ouid=111665445991279316689
 /// for the era identifier spec
 fn era_to_code(original: &str, year: i32) -> Result<TinyStr16, String> {
@@ -184,57 +158,54 @@ fn era_to_code(original: &str, year: i32) -> Result<TinyStr16, String> {
     let name = original
         .split(' ')
         .next()
-        .ok_or_else(|| format!("Era name {} doesn't contain any text", original))?;
+        .expect("split iterator is non-empty");
     let name = name
-        .replace(&['ō', 'Ō'], "o")
-        .replace(&['ū', 'Ū'], "u")
-        .replace(&['-', '\'', '’'], "")
+        .replace(['ō', 'Ō'], "o")
+        .replace(['ū', 'Ū'], "u")
+        .replace(['-', '\'', '’'], "")
         .to_lowercase();
     if !name.is_ascii() {
         return Err(format!(
-            "Era name {} (parsed from {}) contains non-ascii characters",
-            name, original
+            "Era name {name} (parsed from {original}) contains non-ascii characters"
         ));
     }
 
     let code = if year >= 1868 {
         name
     } else {
-        format!("{}-{}", name, year)
+        format!("{name}-{year}")
     };
 
     // In case of future or past eras that do not fit, we may need to introduce a truncation scheme
     let code = code.parse().map_err(|e| {
-        format!(
-            "Era code {} (parsed from {}) does not fit into a TinyStr16: {}",
-            code, original, e
-        )
+        format!("Era code {code} (parsed from {original}) does not fit into a TinyStr16: {e}")
     })?;
     Ok(code)
 }
 
-icu_provider::impl_dyn_provider!(
-    JapaneseErasProvider,
-    [JapaneseErasV1Marker,],
-    SERDE_SE,
-    ITERABLE_SERDE_SE,
-    DATA_CONVERTER
-);
+impl IterableDataProvider<JapaneseErasV1Marker> for crate::DatagenProvider {
+    fn supported_locales(&self) -> Result<Vec<DataLocale>, DataError> {
+        Ok(vec![Default::default()])
+    }
+}
 
-impl IterableResourceProvider<JapaneseErasV1Marker> for JapaneseErasProvider {
-    fn supported_options(&self) -> Result<Box<dyn Iterator<Item = ResourceOptions>>, DataError> {
-        Ok(Box::new(core::iter::once(ResourceOptions::default())))
+impl IterableDataProvider<JapaneseExtendedErasV1Marker> for crate::DatagenProvider {
+    fn supported_locales(&self) -> Result<Vec<DataLocale>, DataError> {
+        Ok(vec![Default::default()])
     }
 }
 
 pub fn get_era_code_map() -> BTreeMap<String, TinyStr16> {
     let snapshot: JapaneseErasV1 = serde_json::from_str(JAPANESE_FILE)
         .expect("Failed to parse the precached snapshot-japanese@1.json. This is a bug.");
-    snapshot
-        .dates_to_historical_eras
+    let mut map: BTreeMap<_, _> = snapshot
+        .dates_to_eras
         .iter()
-        .chain(snapshot.dates_to_eras.iter())
         .enumerate()
         .map(|(i, (_, value))| (i.to_string(), value))
-        .collect()
+        .collect();
+    // Splice in details about gregorian eras for pre-meiji dates
+    map.insert("-2".to_string(), tinystr!(16, "bce"));
+    map.insert("-1".to_string(), tinystr!(16, "ce"));
+    map
 }

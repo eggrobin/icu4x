@@ -19,22 +19,24 @@ fn print(_input: &str, _value: Option<usize>) {
     if let Some(value) = _value {
         println!("{}", _input.replace("{}", &value.to_string()));
     } else {
-        println!("{}", _input);
+        println!("{_input}");
     }
 }
 
 #[no_mangle]
 fn main(_argc: isize, _argv: *const *const u8) -> isize {
     icu_benchmark_macros::main_setup!();
-    let provider = icu_testdata::get_static_provider();
 
     {
         print("\n====== Unread Emails (en) example ============", None);
-        let pr = PluralRules::try_new_cardinal(locale!("en"), &provider)
-            .expect("Failed to create a PluralRules instance.");
+        let pr = PluralRules::try_new_cardinal_unstable(
+            &icu_testdata::unstable(),
+            &locale!("en").into(),
+        )
+        .expect("Failed to create a PluralRules instance.");
 
         for value in VALUES {
-            match pr.select(*value) {
+            match pr.category_for(*value) {
                 PluralCategory::One => print("You have one unread email.", None),
                 _ => print("You have {} unread emails.", Some(*value)),
             }

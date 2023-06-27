@@ -20,22 +20,21 @@
 //! # Examples
 //!
 //! ```
-//! use icu::locid::Locale;
 //! use icu::locid::extensions::unicode::{Key, Value};
+//! use icu::locid::Locale;
 //!
-//! let loc: Locale = "en-US-u-ca-buddhist-t-en-US-h0-hybrid-x-foo".parse()
+//! let loc: Locale = "en-US-u-ca-buddhist-t-en-US-h0-hybrid-x-foo"
+//!     .parse()
 //!     .expect("Failed to parse.");
 //!
-//! assert_eq!(loc.id.language, "en");
+//! assert_eq!(loc.id.language, "en".parse().unwrap());
 //! assert_eq!(loc.id.script, None);
 //! assert_eq!(loc.id.region, Some("US".parse().unwrap()));
 //! assert_eq!(loc.id.variants.len(), 0);
 //!
-//!
 //! let key: Key = "ca".parse().expect("Parsing key failed.");
 //! let value: Value = "buddhist".parse().expect("Parsing value failed.");
-//! assert_eq!(loc.extensions.unicode.keywords.get(&key),
-//!            Some(&value));
+//! assert_eq!(loc.extensions.unicode.keywords.get(&key), Some(&value));
 //! ```
 //!
 //! [`LanguageIdentifier`]: super::LanguageIdentifier
@@ -50,15 +49,16 @@ pub mod private;
 pub mod transform;
 pub mod unicode;
 
-pub use other::Other;
-pub use private::Private;
-pub use transform::Transform;
-pub use unicode::Unicode;
+use other::Other;
+use private::Private;
+use transform::Transform;
+use unicode::Unicode;
 
 use alloc::vec::Vec;
 
 use crate::parser::ParserError;
 use crate::parser::SubtagIterator;
+
 /// Defines the type of extension.
 #[derive(Debug, PartialEq, Eq, Clone, Hash, PartialOrd, Ord, Copy)]
 #[non_exhaustive]
@@ -74,8 +74,7 @@ pub enum ExtensionType {
 }
 
 impl ExtensionType {
-    #[allow(missing_docs)] // TODO(#1028) - Add missing docs.
-    pub fn from_byte(key: u8) -> Result<Self, ParserError> {
+    pub(crate) const fn try_from_byte(key: u8) -> Result<Self, ParserError> {
         let key = key.to_ascii_lowercase();
         match key {
             b'u' => Ok(Self::Unicode),
@@ -85,16 +84,33 @@ impl ExtensionType {
             _ => Err(ParserError::InvalidExtension),
         }
     }
+
+    pub(crate) const fn try_from_bytes_manual_slice(
+        bytes: &[u8],
+        start: usize,
+        end: usize,
+    ) -> Result<Self, ParserError> {
+        if end - start != 1 {
+            return Err(ParserError::InvalidExtension);
+        }
+        #[allow(clippy::indexing_slicing)]
+        Self::try_from_byte(bytes[start])
+    }
 }
 
 /// A map of extensions associated with a given [`Locale`](crate::Locale).
-#[derive(Debug, Default, PartialEq, Eq, Clone, Hash, PartialOrd, Ord)]
-#[allow(missing_docs)] // TODO(#1028) - Add missing docs.
+#[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
 #[non_exhaustive]
 pub struct Extensions {
+    /// A representation of the data for a Unicode extension, when present in the locale identifier.
     pub unicode: Unicode,
+    /// A representation of the data for a transform extension, when present in the locale identifier.
     pub transform: Transform,
+    /// A representation of the data for a private-use extension, when present in the locale identifier.
     pub private: Private,
+    /// A sequence of any other extensions that are present in the locale identifier but are not formally
+    /// [defined](https://unicode.org/reports/tr35/) and represented explicitly as [`Unicode`], [`Transform`],
+    /// and [`Private`] are.
     pub other: Vec<Other>,
 }
 
@@ -118,6 +134,18 @@ impl Extensions {
         }
     }
 
+    /// Function to create a new map of extensions containing exactly one unicode extension, callable in `const`
+    /// context.
+    #[inline]
+    pub const fn from_unicode(unicode: Unicode) -> Self {
+        Self {
+            unicode,
+            transform: Transform::new(),
+            private: Private::new(),
+            other: Vec::new(),
+        }
+    }
+
     /// Returns whether there are no extensions present.
     ///
     /// # Examples
@@ -125,10 +153,9 @@ impl Extensions {
     /// ```
     /// use icu::locid::Locale;
     ///
-    /// let loc: Locale = "en-US-u-foo".parse()
-    ///     .expect("Parsing failed.");
+    /// let loc: Locale = "en-US-u-foo".parse().expect("Parsing failed.");
     ///
-    /// assert_eq!(loc.extensions.is_empty(), false);
+    /// assert!(!loc.extensions.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
         self.unicode.is_empty()
@@ -142,22 +169,23 @@ impl Extensions {
     /// # Examples
     ///
     /// ```
-    /// use std::str::FromStr;
-    /// use icu::locid::Locale;
     /// use icu::locid::extensions::ExtensionType;
+    /// use icu::locid::Locale;
     ///
-    /// let loc: Locale = "und-a-hello-t-mul-u-world-z-zzz-x-extra".parse().unwrap();
+    /// let loc: Locale =
+    ///     "und-a-hello-t-mul-u-world-z-zzz-x-extra".parse().unwrap();
     ///
     /// let mut only_unicode = loc.clone();
-    /// only_unicode.extensions.retain_by_type(|t| t == ExtensionType::Unicode);
-    /// assert_eq!(only_unicode, "und-u-world");
+    /// only_unicode
+    ///     .extensions
+    ///     .retain_by_type(|t| t == ExtensionType::Unicode);
+    /// assert_eq!(only_unicode, "und-u-world".parse().unwrap());
     ///
     /// let mut only_t_z = loc.clone();
     /// only_t_z.extensions.retain_by_type(|t| {
-    ///     t == ExtensionType::Transform
-    ///         || t == ExtensionType::Other(b'z')
+    ///     t == ExtensionType::Transform || t == ExtensionType::Other(b'z')
     /// });
-    /// assert_eq!(only_t_z, "und-t-mul-z-zzz");
+    /// assert_eq!(only_t_z, "und-t-mul-z-zzz".parse().unwrap());
     /// ```
     pub fn retain_by_type<F>(&mut self, mut predicate: F)
     where
@@ -182,19 +210,33 @@ impl Extensions {
         let mut private = None;
         let mut other = Vec::new();
 
-        let mut st = iter.next();
-        while let Some(subtag) = st {
-            match subtag.get(0).map(|b| ExtensionType::from_byte(*b)) {
+        while let Some(subtag) = iter.next() {
+            if subtag.is_empty() {
+                return Err(ParserError::InvalidExtension);
+            }
+            match subtag.first().map(|b| ExtensionType::try_from_byte(*b)) {
                 Some(Ok(ExtensionType::Unicode)) => {
+                    if unicode.is_some() {
+                        return Err(ParserError::DuplicatedExtension);
+                    }
                     unicode = Some(Unicode::try_from_iter(iter)?);
                 }
                 Some(Ok(ExtensionType::Transform)) => {
+                    if transform.is_some() {
+                        return Err(ParserError::DuplicatedExtension);
+                    }
                     transform = Some(Transform::try_from_iter(iter)?);
                 }
                 Some(Ok(ExtensionType::Private)) => {
+                    if private.is_some() {
+                        return Err(ParserError::DuplicatedExtension);
+                    }
                     private = Some(Private::try_from_iter(iter)?);
                 }
                 Some(Ok(ExtensionType::Other(ext))) => {
+                    if other.iter().any(|o: &Other| o.get_ext_byte() == ext) {
+                        return Err(ParserError::DuplicatedExtension);
+                    }
                     let parsed = Other::try_from_iter(ext, iter)?;
                     if let Err(idx) = other.binary_search(&parsed) {
                         other.insert(idx, parsed);
@@ -202,11 +244,8 @@ impl Extensions {
                         return Err(ParserError::InvalidExtension);
                     }
                 }
-                None => {}
                 _ => return Err(ParserError::InvalidExtension),
             }
-
-            st = iter.next();
         }
 
         Ok(Self {
@@ -254,29 +293,30 @@ impl_writeable_for_each_subtag_str_no_test!(Extensions);
 #[test]
 fn test_writeable() {
     use crate::Locale;
-    use core::str::FromStr;
     use writeable::assert_writeable_eq;
-    assert_writeable_eq!(Extensions::new(), "",);
+    assert_writeable_eq!(Extensions::new(), "");
     assert_writeable_eq!(
-        Locale::from_str("my-t-my-d0-zawgyi").unwrap().extensions,
+        "my-t-my-d0-zawgyi".parse::<Locale>().unwrap().extensions,
         "t-my-d0-zawgyi",
     );
     assert_writeable_eq!(
-        Locale::from_str("ar-SA-u-ca-islamic-civil")
+        "ar-SA-u-ca-islamic-civil"
+            .parse::<Locale>()
             .unwrap()
             .extensions,
         "u-ca-islamic-civil",
     );
     assert_writeable_eq!(
-        Locale::from_str("en-001-x-foo-bar").unwrap().extensions,
+        "en-001-x-foo-bar".parse::<Locale>().unwrap().extensions,
         "x-foo-bar",
     );
     assert_writeable_eq!(
-        Locale::from_str("und-t-m0-true").unwrap().extensions,
+        "und-t-m0-true".parse::<Locale>().unwrap().extensions,
         "t-m0-true",
     );
     assert_writeable_eq!(
-        Locale::from_str("und-a-foo-t-foo-u-foo-w-foo-z-foo-x-foo")
+        "und-a-foo-t-foo-u-foo-w-foo-z-foo-x-foo"
+            .parse::<Locale>()
             .unwrap()
             .extensions,
         "a-foo-t-foo-u-foo-w-foo-z-foo-x-foo",

@@ -9,11 +9,15 @@
 #include <optional>
 #include "diplomat_runtime.hpp"
 
-namespace capi {
 #include "ICU4XFixedDecimalGroupingStrategy.h"
-}
 
 
+
+/**
+ * 
+ * 
+ * See the [Rust documentation for `GroupingStrategy`](https://docs.rs/icu/latest/icu/decimal/options/enum.GroupingStrategy.html) for more information.
+ */
 enum struct ICU4XFixedDecimalGroupingStrategy {
   Auto = 0,
   Never = 1,

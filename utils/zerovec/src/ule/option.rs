@@ -14,9 +14,15 @@ use core::mem::{self, MaybeUninit};
 /// ```rust
 /// use zerovec::ZeroVec;
 ///
-/// let z = ZeroVec::alloc_from_slice(&[Some('a'), Some('á'), Some('ø'), None, Some('ł')]);
+/// let z = ZeroVec::alloc_from_slice(&[
+///     Some('a'),
+///     Some('á'),
+///     Some('ø'),
+///     None,
+///     Some('ł'),
+/// ]);
 ///
-/// assert_eq!(z.get(2), Some(Some(('ø'))));
+/// assert_eq!(z.get(2), Some(Some('ø')));
 /// assert_eq!(z.get(3), Some(None));
 /// ```
 // Invariants:
@@ -26,7 +32,7 @@ use core::mem::{self, MaybeUninit};
 pub struct OptionULE<U>(bool, MaybeUninit<U>);
 
 impl<U: Copy> OptionULE<U> {
-    /// Obtain this as an Option<T>
+    /// Obtain this as an `Option<T>`
     pub fn get(self) -> Option<U> {
         if self.0 {
             unsafe {
@@ -38,13 +44,19 @@ impl<U: Copy> OptionULE<U> {
         }
     }
 
-    /// Construct an OptionULE<U> from an equivalent Option<T>
+    /// Construct an `OptionULE<U>` from an equivalent `Option<T>`
     pub fn new(opt: Option<U>) -> Self {
         if let Some(inner) = opt {
             Self(true, MaybeUninit::new(inner))
         } else {
             Self(false, MaybeUninit::zeroed())
         }
+    }
+}
+
+impl<U: Copy + core::fmt::Debug> core::fmt::Debug for OptionULE<U> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.get().fmt(f)
     }
 }
 
@@ -114,8 +126,8 @@ impl<U: Copy + Eq> Eq for OptionULE<U> {}
 /// A type allowing one to represent `Option<U>` for [`VarULE`] `U` types.
 ///
 /// ```rust
-/// use zerovec::VarZeroVec;
 /// use zerovec::ule::OptionVarULE;
+/// use zerovec::VarZeroVec;
 ///
 /// let mut zv: VarZeroVec<OptionVarULE<str>> = VarZeroVec::new();
 ///
@@ -143,6 +155,12 @@ impl<U: VarULE + ?Sized> OptionVarULE<U> {
         } else {
             None
         }
+    }
+}
+
+impl<U: VarULE + ?Sized + core::fmt::Debug> core::fmt::Debug for OptionVarULE<U> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.as_ref().fmt(f)
     }
 }
 

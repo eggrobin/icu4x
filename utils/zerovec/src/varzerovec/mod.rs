@@ -9,6 +9,9 @@ pub(crate) mod owned;
 pub(crate) mod slice;
 pub(crate) mod vec;
 
+#[cfg(feature = "databake")]
+mod databake;
+
 #[cfg(feature = "serde")]
 mod serde;
 
@@ -17,5 +20,7 @@ pub use crate::{VarZeroSlice, VarZeroVec};
 #[cfg(feature = "bench")]
 #[doc(hidden)]
 pub use components::VarZeroVecComponents;
+
+pub use components::{Index16, Index32, VarZeroVecFormat};
 
 pub use owned::VarZeroVecOwned;

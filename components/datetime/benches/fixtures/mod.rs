@@ -4,13 +4,13 @@
 
 pub mod structs;
 
-use icu_datetime::options::DateTimeFormatOptions;
+use icu_datetime::options::DateTimeFormatterOptions;
 use std::fs::File;
 use std::io::BufReader;
 
 #[allow(dead_code)]
 pub fn get_fixture(name: &str) -> std::io::Result<structs::Fixture> {
-    let file = File::open(format!("./benches/fixtures/tests/{}.json", name))?;
+    let file = File::open(format!("./benches/fixtures/tests/{name}.json"))?;
     let reader = BufReader::new(file);
 
     Ok(serde_json::from_reader(reader)?)
@@ -25,9 +25,12 @@ pub fn get_patterns_fixture() -> std::io::Result<structs::PatternsFixture> {
 }
 
 #[allow(dead_code)]
-pub fn get_options(input: &structs::TestOptions) -> DateTimeFormatOptions {
+pub fn get_options(input: &structs::TestOptions) -> Option<DateTimeFormatterOptions> {
     match input {
-        structs::TestOptions::Length(bag) => (*bag).into(),
-        structs::TestOptions::Components(bag) => (*bag).into(),
+        structs::TestOptions::Length(bag) => Some((*bag).into()),
+        #[cfg(feature = "experimental")]
+        structs::TestOptions::Components(bag) => Some((*bag).into()),
+        #[cfg(not(feature = "experimental"))]
+        structs::TestOptions::Components(_) => None,
     }
 }

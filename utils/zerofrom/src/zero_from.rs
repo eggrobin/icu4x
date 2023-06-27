@@ -27,8 +27,8 @@ use alloc::string::String;
 /// Implementing `ZeroFrom` on a custom data struct:
 ///
 /// ```
-/// use zerofrom::ZeroFrom;
 /// use std::borrow::Cow;
+/// use zerofrom::ZeroFrom;
 ///
 /// struct MyStruct<'data> {
 ///     message: Cow<'data, str>,
@@ -38,7 +38,7 @@ use alloc::string::String;
 /// impl<'zf> ZeroFrom<'zf, MyStruct<'_>> for MyStruct<'zf> {
 ///     fn zero_from(other: &'zf MyStruct<'_>) -> Self {
 ///         MyStruct {
-///             message: Cow::Borrowed(&other.message)
+///             message: Cow::Borrowed(&other.message),
 ///         }
 ///     }
 /// }
@@ -47,7 +47,7 @@ use alloc::string::String;
 /// impl<'zf> ZeroFrom<'zf, str> for MyStruct<'zf> {
 ///     fn zero_from(other: &'zf str) -> Self {
 ///         MyStruct {
-///             message: Cow::Borrowed(other)
+///             message: Cow::Borrowed(other),
 ///         }
 ///     }
 /// }
@@ -113,9 +113,9 @@ impl<'zf, B: ToOwned + ?Sized> ZeroFrom<'zf, Cow<'_, B>> for Cow<'zf, B> {
     }
 }
 
-impl<'zf> ZeroFrom<'zf, &'_ str> for &'zf str {
+impl<'zf, T: ?Sized> ZeroFrom<'zf, &'_ T> for &'zf T {
     #[inline]
-    fn zero_from(other: &'zf &'_ str) -> &'zf str {
+    fn zero_from(other: &'zf &'_ T) -> &'zf T {
         other
     }
 }

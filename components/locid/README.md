@@ -1,11 +1,11 @@
 # icu_locid [![crates.io](https://img.shields.io/crates/v/icu_locid)](https://crates.io/crates/icu_locid)
 
-`icu_locid` is one of the [`ICU4X`] components.
+Parsing, manipulating, and serializing Unicode Language and Locale Identifiers.
 
-This API provides necessary functionality for parsing, manipulating, and serializing Unicode Language
-and Locale Identifiers.
+This module is published as its own crate ([`icu_locid`](https://docs.rs/icu_locid/latest/icu_locid/))
+and as part of the [`icu`](https://docs.rs/icu/latest/icu/) crate. See the latter for more details on the ICU4X project.
 
-The crate provides algorithms for parsing a string into a well-formed language or locale identifier
+The module provides algorithms for parsing a string into a well-formed language or locale identifier
 as defined by [`UTS #35: Unicode LDML 3. Unicode Language and Locale Identifiers`].
 
 [`Locale`] is the most common structure to use for storing information about a language,
@@ -21,36 +21,20 @@ If in doubt, use [`Locale`].
 
 ```rust
 use icu::locid::Locale;
-use icu::locid::subtags::{Language, Region};
+use icu::locid::{
+    locale, subtags_language as language, subtags_region as region,
+};
 
-let mut loc: Locale = "en-US".parse()
-    .expect("Parsing failed.");
+let mut loc: Locale = locale!("en-US");
 
-let lang: Language = "en".parse()
-    .expect("Parsing failed.");
-let region: Region = "US".parse()
-    .expect("Parsing failed.");
-
-assert_eq!(loc.id.language, lang);
+assert_eq!(loc.id.language, language!("en"));
 assert_eq!(loc.id.script, None);
-assert_eq!(loc.id.region, Some(region));
+assert_eq!(loc.id.region, Some(region!("US")));
 assert_eq!(loc.id.variants.len(), 0);
 
-let region: Region = "GB".parse().expect("Parsing failed.");
-loc.id.region = Some(region);
+loc.id.region = Some(region!("GB"));
 
-assert_eq!(loc.to_string(), "en-GB");
-```
-
-### Macros
-
-```rust
-use icu::locid::{language, region, langid};
-
-let lid = langid!("EN_US");
-
-assert_eq!(lid.language, language!("en"));
-assert_eq!(lid.region, Some(region!("US")));
+assert_eq!(loc, locale!("en-GB"));
 ```
 
 For more details, see [`Locale`] and [`LanguageIdentifier`].

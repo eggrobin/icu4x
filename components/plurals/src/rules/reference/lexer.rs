@@ -50,6 +50,7 @@ impl std::error::Error for LexerError {}
 /// let lexer = Lexer::new(input);
 /// assert_eq!(lexer.count(), 3);
 /// ```
+#[derive(Debug)]
 pub struct Lexer<'l> {
     chars: &'l [u8],
     ptr: usize,
@@ -130,7 +131,7 @@ impl<'l> Lexer<'l> {
 
                         let mut value = 0;
                         #[allow(clippy::indexing_slicing)]
-                        // TODO(#1668) Clippy exceptions need docs or fixing.
+                        // start..end are calculated to be within bounds.
                         for ptr in start..end {
                             let mul = 10_u32.pow((end - ptr - 1) as u32);
                             value += ((self.chars[ptr] - b'0') as u32) * mul;

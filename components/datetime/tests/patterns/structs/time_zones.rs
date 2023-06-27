@@ -3,14 +3,16 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 use icu_datetime::time_zone;
+use icu_datetime::time_zone::TimeZoneFormatter;
+use icu_datetime::DateTimeError;
 use serde::{Deserialize, Serialize};
-use tinystr::TinyStr8;
+use tinystr::TinyAsciiStr;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimeZoneConfig {
-    pub time_zone_id: Option<String>,
-    pub metazone_id: Option<String>,
-    pub time_variant: Option<TinyStr8>,
+    pub time_zone_id: Option<TinyAsciiStr<8>>,
+    pub metazone_id: Option<TinyAsciiStr<4>>,
+    pub zone_variant: Option<TinyAsciiStr<2>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,7 +29,7 @@ pub struct TimeZoneTest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimeZoneExpectation {
     pub patterns: Vec<String>,
-    pub configs: Vec<TimeZoneFormatConfig>,
+    pub configs: Vec<TimeZoneFormatterConfig>,
     pub fallback_formats: Vec<FallbackFormat>,
     pub expected: Vec<String>,
 }
@@ -38,22 +40,20 @@ pub enum FallbackFormat {
     LocalizedGmt,
 }
 
-impl From<FallbackFormat> for time_zone::TimeZoneFormatOptions {
-    fn from(other: FallbackFormat) -> time_zone::TimeZoneFormatOptions {
-        match other {
+impl From<FallbackFormat> for time_zone::TimeZoneFormatterOptions {
+    fn from(other: FallbackFormat) -> time_zone::TimeZoneFormatterOptions {
+        let mut options = time_zone::TimeZoneFormatterOptions::default();
+        options.fallback_format = match other {
             FallbackFormat::Iso8601(iso_format, iso_minutes, iso_seconds) => {
-                time_zone::TimeZoneFormatOptions {
-                    fallback_format: time_zone::FallbackFormat::Iso8601(
-                        iso_format.into(),
-                        iso_minutes.into(),
-                        iso_seconds.into(),
-                    ),
-                }
+                time_zone::FallbackFormat::Iso8601(
+                    iso_format.into(),
+                    iso_minutes.into(),
+                    iso_seconds.into(),
+                )
             }
-            FallbackFormat::LocalizedGmt => time_zone::TimeZoneFormatOptions {
-                fallback_format: time_zone::FallbackFormat::LocalizedGmt,
-            },
-        }
+            FallbackFormat::LocalizedGmt => time_zone::FallbackFormat::LocalizedGmt,
+        };
+        options
     }
 }
 
@@ -93,15 +93,6 @@ pub enum ZeroPadding {
     Off,
 }
 
-impl From<ZeroPadding> for time_zone::ZeroPadding {
-    fn from(other: ZeroPadding) -> time_zone::ZeroPadding {
-        match other {
-            ZeroPadding::On => time_zone::ZeroPadding::On,
-            ZeroPadding::Off => time_zone::ZeroPadding::Off,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum IsoFormat {
     Basic,
@@ -122,7 +113,7 @@ impl From<IsoFormat> for time_zone::IsoFormat {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum TimeZoneFormatConfig {
+pub enum TimeZoneFormatterConfig {
     GenericNonLocationLong,
     GenericNonLocationShort,
     GenericLocation,
@@ -132,32 +123,29 @@ pub enum TimeZoneFormatConfig {
     Iso8601(IsoFormat, IsoMinutes, IsoSeconds),
 }
 
-impl From<TimeZoneFormatConfig> for time_zone::TimeZoneFormatConfig {
-    fn from(other: TimeZoneFormatConfig) -> time_zone::TimeZoneFormatConfig {
-        match other {
-            TimeZoneFormatConfig::GenericNonLocationLong => {
-                time_zone::TimeZoneFormatConfig::GenericNonLocationLong
+impl TimeZoneFormatterConfig {
+    pub fn set_on_formatter(self, tzf: &mut TimeZoneFormatter) -> Result<(), DateTimeError> {
+        match self {
+            TimeZoneFormatterConfig::GenericNonLocationLong => {
+                tzf.load_generic_non_location_long(&icu_testdata::unstable())
             }
-            TimeZoneFormatConfig::GenericNonLocationShort => {
-                time_zone::TimeZoneFormatConfig::GenericNonLocationShort
+            TimeZoneFormatterConfig::GenericNonLocationShort => {
+                tzf.load_generic_non_location_short(&icu_testdata::unstable())
             }
-            TimeZoneFormatConfig::GenericLocation => {
-                time_zone::TimeZoneFormatConfig::GenericLocation
+            TimeZoneFormatterConfig::GenericLocation => {
+                tzf.load_generic_location_format(&icu_testdata::unstable())
             }
-            TimeZoneFormatConfig::SpecificNonLocationLong => {
-                time_zone::TimeZoneFormatConfig::SpecificNonLocationLong
+            TimeZoneFormatterConfig::SpecificNonLocationLong => {
+                tzf.load_specific_non_location_long(&icu_testdata::unstable())
             }
-            TimeZoneFormatConfig::SpecificNonLocationShort => {
-                time_zone::TimeZoneFormatConfig::SpecificNonLocationShort
+            TimeZoneFormatterConfig::SpecificNonLocationShort => {
+                tzf.load_specific_non_location_short(&icu_testdata::unstable())
             }
-            TimeZoneFormatConfig::LocalizedGMT => time_zone::TimeZoneFormatConfig::LocalizedGMT,
-            TimeZoneFormatConfig::Iso8601(iso_format, iso_minutes, iso_seconds) => {
-                time_zone::TimeZoneFormatConfig::Iso8601(
-                    iso_format.into(),
-                    iso_minutes.into(),
-                    iso_seconds.into(),
-                )
+            TimeZoneFormatterConfig::LocalizedGMT => tzf.load_localized_gmt_format(),
+            TimeZoneFormatterConfig::Iso8601(format, minutes, seconds) => {
+                tzf.load_iso_8601_format(format.into(), minutes.into(), seconds.into())
             }
         }
+        .map(|_| ())
     }
 }

@@ -11,23 +11,24 @@
 //! # Examples
 //!
 //! ```
-//! use icu::locid::{LanguageIdentifier, Locale};
-//! use icu::locid::extensions::unicode::{Unicode, Key, Value, Attribute};
+//! use icu::locid::Locale;
+//! use icu::locid::{
+//!     extensions::unicode::Unicode,
+//!     extensions_unicode_attribute as attribute,
+//!     extensions_unicode_key as key, extensions_unicode_value as value,
+//! };
 //!
-//! let mut loc: Locale = "en-US-u-foobar-hc-h12".parse()
-//!     .expect("Parsing failed.");
+//! let loc: Locale = "en-US-u-foobar-hc-h12".parse().expect("Parsing failed.");
 //!
-//! let key: Key = "hc".parse()
-//!     .expect("Parsing key failed.");
-//! let value: Value = "h12".parse()
-//!     .expect("Parsing value failed.");
-//! let attribute: Attribute = "foobar".parse()
-//!     .expect("Parsing attribute failed.");
-//!
-//! assert_eq!(loc.extensions.unicode.keywords.get(&key), Some(&value));
-//! assert!(loc.extensions.unicode.attributes.contains(&attribute));
-//!
-//! assert_eq!(&loc.extensions.unicode.to_string(), "-u-foobar-hc-h12");
+//! assert_eq!(
+//!     loc.extensions.unicode.keywords.get(&key!("hc")),
+//!     Some(&value!("h12"))
+//! );
+//! assert!(loc
+//!     .extensions
+//!     .unicode
+//!     .attributes
+//!     .contains(&attribute!("foobar")));
 //! ```
 mod attribute;
 mod attributes;
@@ -35,13 +36,13 @@ mod key;
 mod keywords;
 mod value;
 
-use alloc::vec;
 pub use attribute::Attribute;
 pub use attributes::Attributes;
 pub use key::Key;
 pub use keywords::Keywords;
 pub use value::Value;
 
+use crate::helpers::ShortSlice;
 use crate::parser::ParserError;
 use crate::parser::SubtagIterator;
 use litemap::LiteMap;
@@ -63,21 +64,25 @@ use litemap::LiteMap;
 ///
 /// ```
 /// use icu::locid::Locale;
-/// use icu::locid::extensions::unicode::{Key, Value};
+/// use icu::locid::{
+///     extensions_unicode_key as key, extensions_unicode_value as value,
+/// };
 ///
-/// let mut loc: Locale = "de-u-hc-h12-ca-buddhist".parse()
-///     .expect("Parsing failed.");
+/// let loc: Locale =
+///     "de-u-hc-h12-ca-buddhist".parse().expect("Parsing failed.");
 ///
-/// let key: Key = "ca".parse().expect("Parsing key failed.");
-/// let value: Value = "buddhist".parse().expect("Parsing value failed.");
-/// assert_eq!(loc.extensions.unicode.keywords.get(&key),
-///            Some(&value));
+/// assert_eq!(
+///     loc.extensions.unicode.keywords.get(&key!("ca")),
+///     Some(&value!("buddhist"))
+/// );
 /// ```
 #[derive(Clone, PartialEq, Eq, Debug, Default, Hash, PartialOrd, Ord)]
-#[allow(missing_docs)] // TODO(#1028) - Add missing docs.
 #[allow(clippy::exhaustive_structs)] // spec-backed stable datastructure
 pub struct Unicode {
+    /// The key-value pairs present in this locale extension, with each extension key subtag
+    /// associated to its provided value subtag.
     pub keywords: Keywords,
+    /// A canonically ordered sequence of single standalone subtags for this locale extension.
     pub attributes: Attributes,
 }
 
@@ -106,10 +111,9 @@ impl Unicode {
     /// ```
     /// use icu::locid::Locale;
     ///
-    /// let loc: Locale = "en-US-u-foo".parse()
-    ///     .expect("Parsing failed.");
+    /// let loc: Locale = "en-US-u-foo".parse().expect("Parsing failed.");
     ///
-    /// assert_eq!(loc.extensions.unicode.is_empty(), false);
+    /// assert!(!loc.extensions.unicode.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
         self.keywords.is_empty() && self.attributes.is_empty()
@@ -121,12 +125,12 @@ impl Unicode {
     /// # Example
     ///
     /// ```
-    /// use std::str::FromStr;
     /// use icu::locid::Locale;
     ///
-    /// let mut loc: Locale = "und-t-mul-u-hello-ca-buddhist-hc-h12".parse().unwrap();
+    /// let mut loc: Locale =
+    ///     "und-t-mul-u-hello-ca-buddhist-hc-h12".parse().unwrap();
     /// loc.extensions.unicode.clear();
-    /// assert_eq!(loc, "und-t-mul");
+    /// assert_eq!(loc, "und-t-mul".parse().unwrap());
     /// ```
     pub fn clear(&mut self) {
         self.keywords.clear();
@@ -134,14 +138,10 @@ impl Unicode {
     }
 
     pub(crate) fn try_from_iter(iter: &mut SubtagIterator) -> Result<Self, ParserError> {
-        let mut attributes = vec![];
-        let mut keywords = LiteMap::new();
-
-        let mut current_keyword = None;
-        let mut current_type = vec![];
+        let mut attributes = ShortSlice::new();
 
         while let Some(subtag) = iter.peek() {
-            if let Ok(attr) = Attribute::from_bytes(subtag) {
+            if let Ok(attr) = Attribute::try_from_bytes(subtag) {
                 if let Err(idx) = attributes.binary_search(&attr) {
                     attributes.insert(idx, attr);
                 }
@@ -151,17 +151,22 @@ impl Unicode {
             iter.next();
         }
 
+        let mut keywords = LiteMap::new();
+
+        let mut current_keyword = None;
+        let mut current_value = ShortSlice::new();
+
         while let Some(subtag) = iter.peek() {
             let slen = subtag.len();
             if slen == 2 {
                 if let Some(kw) = current_keyword.take() {
-                    keywords.try_insert(kw, Value::from_vec_unchecked(current_type));
-                    current_type = vec![];
+                    keywords.try_insert(kw, Value::from_short_slice_unchecked(current_value));
+                    current_value = ShortSlice::new();
                 }
-                current_keyword = Some(Key::from_bytes(subtag)?);
+                current_keyword = Some(Key::try_from_bytes(subtag)?);
             } else if current_keyword.is_some() {
                 match Value::parse_subtag(subtag) {
-                    Ok(Some(t)) => current_type.push(t),
+                    Ok(Some(t)) => current_value.push(t),
                     Ok(None) => {}
                     Err(_) => break,
                 }
@@ -172,7 +177,7 @@ impl Unicode {
         }
 
         if let Some(kw) = current_keyword.take() {
-            keywords.try_insert(kw, Value::from_vec_unchecked(current_type));
+            keywords.try_insert(kw, Value::from_short_slice_unchecked(current_value));
         }
 
         // Ensure we've defined at least one attribute or keyword
@@ -182,7 +187,7 @@ impl Unicode {
 
         Ok(Self {
             keywords: keywords.into(),
-            attributes: Attributes::from_vec_unchecked(attributes),
+            attributes: Attributes::from_short_slice_unchecked(attributes),
         })
     }
 
@@ -200,18 +205,14 @@ impl Unicode {
     }
 }
 
-impl core::fmt::Display for Unicode {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        writeable::Writeable::write_to(self, f)
-    }
-}
+writeable::impl_display_with_writeable!(Unicode);
 
 impl writeable::Writeable for Unicode {
     fn write_to<W: core::fmt::Write + ?Sized>(&self, sink: &mut W) -> core::fmt::Result {
         if self.is_empty() {
             return Ok(());
         }
-        sink.write_str("-u")?;
+        sink.write_str("u")?;
         if !self.attributes.is_empty() {
             sink.write_char('-')?;
             writeable::Writeable::write_to(&self.attributes, sink)?;
@@ -223,16 +224,16 @@ impl writeable::Writeable for Unicode {
         Ok(())
     }
 
-    fn write_len(&self) -> writeable::LengthHint {
+    fn writeable_length_hint(&self) -> writeable::LengthHint {
         if self.is_empty() {
             return writeable::LengthHint::exact(0);
         }
-        let mut result = writeable::LengthHint::exact(2);
+        let mut result = writeable::LengthHint::exact(1);
         if !self.attributes.is_empty() {
-            result += writeable::Writeable::write_len(&self.attributes) + 1;
+            result += writeable::Writeable::writeable_length_hint(&self.attributes) + 1;
         }
         if !self.keywords.is_empty() {
-            result += writeable::Writeable::write_len(&self.keywords) + 1;
+            result += writeable::Writeable::writeable_length_hint(&self.keywords) + 1;
         }
         result
     }

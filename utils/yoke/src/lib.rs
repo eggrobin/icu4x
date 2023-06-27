@@ -32,7 +32,10 @@
         clippy::indexing_slicing,
         clippy::unwrap_used,
         clippy::expect_used,
-        clippy::panic
+        clippy::panic,
+        clippy::exhaustive_structs,
+        clippy::exhaustive_enums,
+        missing_debug_implementations,
     )
 )]
 // The lifetimes here are important for safety and explicitly writing
@@ -45,7 +48,6 @@ extern crate alloc;
 pub mod either;
 #[cfg(feature = "alloc")]
 pub mod erased;
-mod is_covariant;
 mod macro_impls;
 pub mod trait_hack;
 mod yoke;
@@ -53,13 +55,9 @@ mod yokeable;
 #[cfg(feature = "zerofrom")]
 mod zero_from;
 
-#[cfg(feature = "serde")]
-mod serde;
-
 #[cfg(feature = "derive")]
 pub use yoke_derive::Yokeable;
 
-pub use crate::is_covariant::IsCovariant;
 pub use crate::yoke::{CloneableCart, Yoke};
 pub use crate::yokeable::Yokeable;
 

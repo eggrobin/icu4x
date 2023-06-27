@@ -2,11 +2,17 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-//! APIs and Data Structures for Plural Rules
+//! 🚧 \[Experimental\] APIs and Data Structures for Plural Rules
 //!
 //! A single Plural Rule is an expression which tests the value of [`PluralOperands`]
 //! against a condition. If the condition is truthful, then the [`PluralCategory`]
 //! to which the Rule is assigned should be used.
+//!
+//! <div class="stab unstable">
+//! 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+//! including in SemVer minor releases. Use with caution.
+//! <a href="https://github.com/unicode-org/icu4x/issues/1091">#1091</a>
+//! </div>
 //!
 //! # Examples
 //!
@@ -23,14 +29,14 @@
 //! ```
 //!
 //! When the user provides a number for which the [`PluralCategory`] is to be selected,
-//! the system will examin a rule for each category in order, and stop on the first
+//! the system will examine a rule for each category in order, and stop on the first
 //! category which matches.
 //!
 //! In our example, the user provided an input value `1`.
-//! That value expanded into [`PluralOperands`] looks like this:
+//! That value expanded into [`PluralOperands`] might look something like this, in its
+//! internal representation of plural operand values, or something logically equivalent:
 //!
-//! ```
-//! use icu::plurals::PluralOperands;
+//! ```text
 //! PluralOperands {
 //!     i: 1,
 //!     v: 0,
@@ -55,26 +61,22 @@
 //! When parsed, the resulting [`AST`] will look like this:
 //!
 //! ```
-//! use icu::plurals::rules::reference::parse_condition;
 //! use icu::plurals::rules::reference::ast::*;
+//! use icu::plurals::rules::reference::parse_condition;
 //!
 //! let input = "i = 1 and v = 0 @integer 1";
 //!
-//! let ast = parse_condition(input.as_bytes())
-//!     .expect("Parsing failed.");
-//! assert_eq!(ast, Condition(vec![
-//!     AndCondition(vec![
+//! let ast = parse_condition(input.as_bytes()).expect("Parsing failed.");
+//! assert_eq!(
+//!     ast,
+//!     Condition(vec![AndCondition(vec![
 //!         Relation {
 //!             expression: Expression {
 //!                 operand: Operand::I,
 //!                 modulus: None,
 //!             },
 //!             operator: Operator::Eq,
-//!             range_list: RangeList(vec![
-//!                 RangeListItem::Value(
-//!                     Value(1)
-//!                 )
-//!             ])
+//!             range_list: RangeList(vec![RangeListItem::Value(Value(1))])
 //!         },
 //!         Relation {
 //!             expression: Expression {
@@ -82,14 +84,10 @@
 //!                 modulus: None,
 //!             },
 //!             operator: Operator::Eq,
-//!             range_list: RangeList(vec![
-//!                 RangeListItem::Value(
-//!                     Value(0)
-//!                 )
-//!             ])
+//!             range_list: RangeList(vec![RangeListItem::Value(Value(0))])
 //!         },
-//!     ]),
-//! ]));
+//!     ]),])
+//! );
 //! ```
 //!
 //! Finally, we can pass this [`AST`] (in fact, just the [`Condition`] node),
@@ -97,16 +95,15 @@
 //! matches:
 //!
 //! ```
-//! use icu::plurals::rules::reference::test_condition;
 //! use icu::plurals::rules::reference::parse_condition;
+//! use icu::plurals::rules::reference::test_condition;
 //! use icu::plurals::PluralOperands;
 //!
 //! let input = "i = 1 and v = 0 @integer 1";
 //!
 //! let operands = PluralOperands::from(1_u32);
 //!
-//! let ast = parse_condition(input.as_bytes())
-//!     .expect("Parsing failed.");
+//! let ast = parse_condition(input.as_bytes()).expect("Parsing failed.");
 //!
 //! assert!(test_condition(&ast, &operands));
 //! ```
@@ -117,12 +114,13 @@
 //!
 //! # Summary
 //!
-//! For [`PluralRuleType::Cardinal`] in English, we can summarize the logic as:
+//! For [`PluralRuleType::Cardinal`] in English, we can restate the rule's logic as:
 //!
-//! If [`PluralOperands::i`] is `1` and [`PluralOperands::v`] is `0`, [`PluralCategory::One`]
+//! When the `PluralOperands::i` is `1` and `PluralOperands::v` is `0` (or equivalent thereof), [`PluralCategory::One`]
 //! should be used, otherwise [`PluralCategory::Other`] should be used.
 //!
-//! For other locales, there are more [`PluralCategories`] and more complicated [`Rules`].
+//! For other locales, there are different/more [`PluralCategories`] defined in the `PluralRules` (see [`PluralRules::categories`]),
+//! and possibly more complicated [`Rules`] therein.
 //!
 //! # Difference between Category and Number
 //!
@@ -147,17 +145,22 @@
 //! [`PluralCategory::One`]: super::PluralCategory::One
 //! [`PluralCategory::Other`]: super::PluralCategory::Other
 //! [`PluralOperands`]: super::PluralOperands
-//! [`PluralOperands::i`]: super::PluralOperands::i
-//! [`PluralOperands::v`]: super::PluralOperands::v
+//! [`PluralRules::categories`]: super::PluralRules::categories
 //! [`PluralRuleType::Cardinal`]: super::PluralRuleType::Cardinal
 //! [`Rule`]: super::rules::reference::ast::Rule
 //! [`Rules`]: super::rules::reference::ast::Rule
 //! [`Condition`]: super::rules::reference::ast::Condition
 //! [`Sample`]: super::rules::reference::ast::Samples
 //! [`AST`]: super::rules::reference::ast
-pub mod reference;
 
-// Need to expose it for `icu::provider_cldr` use, but we don't
+#[doc(hidden)]
+pub mod reference;
+// Need to expose it for `icu_datagen` use, but we don't
 // have a reason to make it fully public, so hiding docs for now.
+#[cfg(feature = "experimental")]
+mod raw_operands;
 #[doc(hidden)]
 pub mod runtime;
+
+#[cfg(feature = "experimental")]
+pub use raw_operands::RawPluralOperands;

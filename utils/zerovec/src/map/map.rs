@@ -44,8 +44,8 @@ use core::iter::FromIterator;
 ///
 /// let data = Data { map };
 ///
-/// let bincode_bytes = bincode::serialize(&data)
-///     .expect("Serialization should be successful");
+/// let bincode_bytes =
+///     bincode::serialize(&data).expect("Serialization should be successful");
 ///
 /// // Will deserialize without any allocations
 /// let deserialized: Data = bincode::deserialize(&bincode_bytes)
@@ -94,10 +94,16 @@ where
     /// ```
     pub fn new() -> Self {
         Self {
-            keys: K::Container::zvl_new(),
-            values: V::Container::zvl_new(),
+            keys: K::Container::zvl_with_capacity(0),
+            values: V::Container::zvl_with_capacity(0),
         }
     }
+
+    #[doc(hidden)] // databake internal
+    pub const unsafe fn from_parts_unchecked(keys: K::Container, values: V::Container) -> Self {
+        Self { keys, values }
+    }
+
     /// Construct a new [`ZeroMap`] with a given capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -188,8 +194,8 @@ where
     /// let mut map = ZeroMap::new();
     /// map.insert(&1, "one");
     /// map.insert(&2, "two");
-    /// assert_eq!(map.contains_key(&1), true);
-    /// assert_eq!(map.contains_key(&3), false);
+    /// assert!(map.contains_key(&1));
+    /// assert!(!map.contains_key(&3));
     /// ```
     pub fn contains_key(&self, key: &K) -> bool {
         self.keys.zvl_binary_search(key).is_ok()
@@ -282,7 +288,7 @@ where
     /// Produce an ordered iterator over key-value pairs
     pub fn iter<'b>(
         &'b self,
-    ) -> impl Iterator<
+    ) -> impl ExactSizeIterator<
         Item = (
             &'b <K as ZeroMapKV<'a>>::GetType,
             &'b <V as ZeroMapKV<'a>>::GetType,
@@ -290,23 +296,27 @@ where
     > {
         (0..self.keys.zvl_len()).map(move |idx| {
             (
-                #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+                #[allow(clippy::unwrap_used)] // idx is in-range
                 self.keys.zvl_get(idx).unwrap(),
-                #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+                #[allow(clippy::unwrap_used)] // idx is in-range
                 self.values.zvl_get(idx).unwrap(),
             )
         })
     }
 
     /// Produce an ordered iterator over keys
-    pub fn iter_keys<'b>(&'b self) -> impl Iterator<Item = &'b <K as ZeroMapKV<'a>>::GetType> {
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+    pub fn iter_keys<'b>(
+        &'b self,
+    ) -> impl ExactSizeIterator<Item = &'b <K as ZeroMapKV<'a>>::GetType> {
+        #[allow(clippy::unwrap_used)] // idx is in-range
         (0..self.keys.zvl_len()).map(move |idx| self.keys.zvl_get(idx).unwrap())
     }
 
     /// Produce an iterator over values, ordered by keys
-    pub fn iter_values<'b>(&'b self) -> impl Iterator<Item = &'b <V as ZeroMapKV<'a>>::GetType> {
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+    pub fn iter_values<'b>(
+        &'b self,
+    ) -> impl ExactSizeIterator<Item = &'b <V as ZeroMapKV<'a>>::GetType> {
+        #[allow(clippy::unwrap_used)] // idx is in-range
         (0..self.values.zvl_len()).map(move |idx| self.values.zvl_get(idx).unwrap())
     }
 }
@@ -321,27 +331,39 @@ where
     /// types with the value to avoid an extra allocation when dealing with custom ULE types.
     ///
     /// ```rust
-    /// use zerovec::ZeroMap;
     /// use std::borrow::Cow;
+    /// use zerovec::ZeroMap;
     ///
     /// #[zerovec::make_varule(PersonULE)]
     /// #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
     /// struct Person<'a> {
     ///     age: u8,
-    ///     name: Cow<'a, str>    
+    ///     name: Cow<'a, str>,
     /// }
     ///
     /// let mut map: ZeroMap<u32, PersonULE> = ZeroMap::new();
-    /// map.insert_var_v(&1, &Person { age: 20, name: "Joseph".into()    });
-    /// map.insert_var_v(&1, &Person { age: 35, name: "Carla".into()     });
+    /// map.insert_var_v(
+    ///     &1,
+    ///     &Person {
+    ///         age: 20,
+    ///         name: "Joseph".into(),
+    ///     },
+    /// );
+    /// map.insert_var_v(
+    ///     &1,
+    ///     &Person {
+    ///         age: 35,
+    ///         name: "Carla".into(),
+    ///     },
+    /// );
     /// assert_eq!(&map.get(&1).unwrap().name, "Carla");
     /// assert!(map.get(&3).is_none());
     /// ```
     pub fn insert_var_v<VE: EncodeAsVarULE<V>>(&mut self, key: &K, value: &VE) -> Option<Box<V>> {
         match self.keys.zvl_binary_search(key) {
             Ok(index) => {
-                #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-                let ret = self.values.get(index).expect("invalid index").to_boxed();
+                #[allow(clippy::unwrap_used)] // binary search
+                let ret = self.values.get(index).unwrap().to_boxed();
                 self.values.make_mut().replace(index, value);
                 Some(ret)
             }
@@ -360,8 +382,8 @@ where
 impl<'a, K, V> ZeroMap<'a, K, V>
 where
     K: ZeroMapKV<'a> + ?Sized + Ord,
-    V: ZeroMapKV<'a, Container = ZeroVec<'a, V>> + ?Sized,
-    V: AsULE + Copy,
+    V: ZeroMapKV<'a> + ?Sized,
+    V: Copy,
 {
     /// For cases when `V` is fixed-size, obtain a direct copy of `V` instead of `V::ULE`.
     ///
@@ -375,9 +397,10 @@ where
     /// map.insert(&2, &'b');
     /// assert_eq!(map.get_copied(&1), Some('a'));
     /// assert_eq!(map.get_copied(&3), None);
+    #[inline]
     pub fn get_copied(&self, key: &K) -> Option<V> {
         let index = self.keys.zvl_binary_search(key).ok()?;
-        ZeroSlice::get(&*self.values, index)
+        self.get_copied_at(index)
     }
 
     /// Binary search the map with `predicate` to find a key, returning the value.
@@ -396,9 +419,18 @@ where
     /// assert_eq!(map.get_copied_by(|probe| probe.cmp(&1)), Some('a'));
     /// assert_eq!(map.get_copied_by(|probe| probe.cmp(&3)), None);
     /// ```
+    #[inline]
     pub fn get_copied_by(&self, predicate: impl FnMut(&K) -> Ordering) -> Option<V> {
         let index = self.keys.zvl_binary_search_by(predicate).ok()?;
-        ZeroSlice::get(&*self.values, index)
+        self.get_copied_at(index)
+    }
+
+    fn get_copied_at(&self, index: usize) -> Option<V> {
+        let ule = self.values.zvl_get(index)?;
+        let mut result = Option::<V>::None;
+        V::Container::zvl_get_as_t(ule, |v| result.replace(*v));
+        #[allow(clippy::unwrap_used)] // `zvl_get_as_t` guarantees that the callback is invoked
+        Some(result.unwrap())
     }
 }
 
@@ -415,9 +447,9 @@ where
     ) -> impl Iterator<Item = (&'b <K as ZeroMapKV<'a>>::GetType, V)> {
         (0..self.keys.zvl_len()).map(move |idx| {
             (
-                #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+                #[allow(clippy::unwrap_used)] // idx in 0..keys.zvl_len()
                 self.keys.zvl_get(idx).unwrap(),
-                #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+                #[allow(clippy::unwrap_used)] // idx in 0..keys.zvl_len() = values.zvl_len()
                 ZeroSlice::get(&*self.values, idx).unwrap(),
             )
         })
@@ -439,9 +471,9 @@ where
         let values = &self.values;
         (0..keys.len()).map(move |idx| {
             (
-                #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+                #[allow(clippy::unwrap_used)] // idx in 0..keys.zvl_len()
                 ZeroSlice::get(&**keys, idx).unwrap(),
-                #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
+                #[allow(clippy::unwrap_used)] // idx in 0..keys.zvl_len() = values.zvl_len()
                 ZeroSlice::get(&**values, idx).unwrap(),
             )
         })

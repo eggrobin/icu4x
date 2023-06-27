@@ -2,38 +2,20 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-//! `icu_provider_blob` contains implementations of the [`ICU4X`] [`BufferProvider`] interface
-//! that load data from a single blob.
+//! `icu_provider_blob` contains [`BlobDataProvider`], a [`BufferProvider`] implementation that
+//! supports loading data from a single serialized blob.
 //!
-//! There are two exports:
-//!
-//! 1. [`BlobDataProvider`] supports data blobs loaded dynamically at runtime.
-//! 2. [`StaticDataProvider`] supports data blobs baked into the binary at compile time.
-//!
-//! To build blob data, use the `--format blob` option of [`icu4x-datagen`]. For example, to build
-//! "hello world" data, run:
+//! To build blob data, use the `--format blob` option of [`icu_datagen`]:
 //!
 //! ```bash
-//! $ cargo run --bin=icu4x-datagen -- \
-//!     --format blob \
-//!     --hello-world-key \
-//!     --all-locales \
-//!     --out hello_world.postcard
+//! $ icu4x-datagen --keys all --locales full --format blob --out data.postcard
 //! ```
 //!
-//! # Example
-//!
-//! Create a [`StaticDataProvider`] from pre-built test data:
-//!
-//! ```
-//! let _ = icu_testdata::get_static_provider();
-//! ```
-//!
-//! For more examples, see the specific data providers.
+//! For examples, see the specific data providers.
 //!
 //! [`ICU4X`]: ../icu/index.html
 //! [`BufferProvider`]: icu_provider::BufferProvider
-//! [`icu4x-datagen`]: https://github.com/unicode-org/icu4x/tree/main/provider/datagen#readme
+//! [`icu_datagen`]: ../icu_datagen/index.html
 
 // https://github.com/unicode-org/icu4x/blob/main/docs/process/boilerplate.md#library-annotations
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
@@ -43,18 +25,20 @@
         clippy::indexing_slicing,
         clippy::unwrap_used,
         clippy::expect_used,
-        clippy::panic
+        clippy::panic,
+        clippy::exhaustive_structs,
+        clippy::exhaustive_enums,
+        missing_debug_implementations,
     )
 )]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
 mod blob_data_provider;
 mod blob_schema;
-mod static_data_provider;
 
 #[cfg(feature = "export")]
 pub mod export;
 
 pub use blob_data_provider::BlobDataProvider;
-pub use static_data_provider::StaticDataProvider;

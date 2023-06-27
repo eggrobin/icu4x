@@ -3,24 +3,35 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 #include "../../include/ICU4XPluralRules.hpp"
+#include "../../include/ICU4XLogger.hpp"
 
 #include <iostream>
 
-const std::string_view path = "../../../../../provider/testdata/data/json/";
+const std::string_view path = "../../../../../provider/repodata/data/json/";
 
 int main() {
-    ICU4XLocale locale = ICU4XLocale::create("ar").value();
-    std::cout << "Running test for locale " << locale.tostring().ok().value() << std::endl;
-    ICU4XDataProvider dp = ICU4XDataProvider::create_fs(path).provider.value();
-    ICU4XPluralRules pr = ICU4XPluralRules::try_new_cardinal(locale, dp).rules.value();
+    ICU4XLogger::init_simple_logger();
+    ICU4XLocale locale = ICU4XLocale::create_from_string("ar").ok().value();
+    std::cout << "Running test for locale " << locale.to_string().ok().value() << std::endl;
+    ICU4XDataProvider dp = ICU4XDataProvider::create_fs(path).ok().value();
+    ICU4XPluralRules pr = ICU4XPluralRules::create_cardinal(dp, locale).ok().value();
 
-    ICU4XPluralOperands op = { .i = 3 };
-    ICU4XPluralCategory cat = pr.select(op);
+    ICU4XPluralOperands op = ICU4XPluralOperands::create_from_string("3").ok().value();
+    ICU4XPluralCategory cat = pr.category_for(op);
 
     std::cout << "Category is " << static_cast<int32_t>(cat)
                                 << " (should be " << static_cast<int32_t>(ICU4XPluralCategory::Few) << ")"
                                 << std::endl;
     if (cat != ICU4XPluralCategory::Few) {
+        return 1;
+    }
+
+    op = ICU4XPluralOperands::create_from_string("1011.0").ok().value();
+    cat = pr.category_for(op);
+    std::cout << "Category is " << static_cast<int32_t>(cat)
+                                << " (should be " << static_cast<int32_t>(ICU4XPluralCategory::Many) << ")"
+                                << std::endl;
+    if (cat != ICU4XPluralCategory::Many) {
         return 1;
     }
     return 0;

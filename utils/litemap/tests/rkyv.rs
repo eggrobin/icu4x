@@ -41,17 +41,14 @@ type LiteMapOfStrings = LiteMap<String, String>;
 type TupleVecOfStrings = Vec<(String, String)>;
 
 fn generate() -> AlignedVec {
-    let mut map: LiteMapOfStrings = LiteMap::new();
-    for (lang, name) in DATA.iter() {
-        map.try_append(lang.to_string(), name.to_string())
-            .ok_or(())
-            .unwrap_err();
-    }
-    let tuple_vec = map.into_tuple_vec();
+    let map = DATA
+        .iter()
+        .map(|&(k, v)| (k.to_owned(), v.to_owned()))
+        .collect::<LiteMapOfStrings>();
 
     let mut serializer = AllocSerializer::<4096>::default();
     serializer
-        .serialize_value(&tuple_vec)
+        .serialize_value(&map.into_tuple_vec())
         .expect("failed to archive test");
     serializer.into_serializer().into_inner()
 }
@@ -81,6 +78,6 @@ fn rkyv_deserialize() {
     let archived = unsafe { archived_root::<TupleVecOfStrings>(&RKYV.0) };
     let deserialized = archived.deserialize(&mut Infallible).unwrap();
     // Safe because we are deserializing a buffer from a trusted source
-    let deserialized: LiteMapOfStrings = unsafe { LiteMap::from_tuple_vec_unchecked(deserialized) };
-    assert_eq!(deserialized.get("tr"), Some(&"Turkish".to_string()));
+    let deserialized: LiteMapOfStrings = LiteMap::from_sorted_store_unchecked(deserialized);
+    assert_eq!(deserialized.get("tr").map(String::as_str), Some("Turkish"));
 }

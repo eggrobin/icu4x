@@ -32,8 +32,8 @@ works under the hood.
 
 ## Cargo features
 
-This crate has five optional features:
- -  `serde` and `serde_serialize`: Allows serializing and deserializing `zerovec`'s abstractions via [`serde`](https://docs.rs/serde)
+This crate has several optional Cargo features:
+ -  `serde`: Allows serializing and deserializing `zerovec`'s abstractions via [`serde`](https://docs.rs/serde)
  -   `yoke`: Enables implementations of `Yokeable` from the [`yoke`](https://docs.rs/yoke/) crate, which is also useful
              in situations involving a lot of zero-copy deserialization.
  - `derive`: Makes it easier to use custom types in these collections by providing the [`#[make_ule]`](crate::make_ule) and
@@ -52,7 +52,7 @@ This crate has five optional features:
 Serialize and deserialize a struct with ZeroVec and VarZeroVec with Bincode:
 
 ```rust
-use zerovec::{ZeroVec, VarZeroVec};
+use zerovec::{VarZeroVec, ZeroVec};
 
 // This example requires the "serde" feature
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -67,12 +67,12 @@ pub struct DataStruct<'data> {
 
 let data = DataStruct {
     nums: ZeroVec::from_slice_or_alloc(&[211, 281, 421, 461]),
-    chars: ZeroVec::from_slice_or_alloc(&['ö', '冇', 'म']),
+    chars: ZeroVec::alloc_from_slice(&['ö', '冇', 'म']),
     strs: VarZeroVec::from(&["hello", "world"]),
 };
-let bincode_bytes = bincode::serialize(&data)
-    .expect("Serialization should be successful");
-assert_eq!(bincode_bytes.len(), 74);
+let bincode_bytes =
+    bincode::serialize(&data).expect("Serialization should be successful");
+assert_eq!(bincode_bytes.len(), 67);
 
 let deserialized: DataStruct = bincode::deserialize(&bincode_bytes)
     .expect("Deserialization should be successful");
@@ -80,7 +80,7 @@ assert_eq!(deserialized.nums.first(), Some(211));
 assert_eq!(deserialized.chars.get(1), Some('冇'));
 assert_eq!(deserialized.strs.get(1), Some("world"));
 // The deserialization will not have allocated anything
-assert!(matches!(deserialized.nums, ZeroVec::Borrowed(_)));
+assert!(!deserialized.nums.is_owned());
 ```
 
 Use custom types inside of ZeroVec:
@@ -144,7 +144,7 @@ let data = Data { important_dates, important_people, birthdays_to_people };
 
 let bincode_bytes = bincode::serialize(&data)
     .expect("Serialization should be successful");
-assert_eq!(bincode_bytes.len(), 180);
+assert_eq!(bincode_bytes.len(), 168);
 
 let deserialized: Data = bincode::deserialize(&bincode_bytes)
     .expect("Deserialization should be successful");

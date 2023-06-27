@@ -2,6 +2,8 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
+#![cfg(feature = "datagen")]
+
 //! Set of `Display` implementations for reference and runtime `Pattern`.
 
 use super::{
@@ -14,10 +16,7 @@ use core::fmt::{self, Write};
 /// A helper function optimized to dump string buffers into `Pattern`
 /// serialization wrapping minimal chunks of the buffer in escaping `'`
 /// literals to produce valid UTF35 pattern string.
-pub(crate) fn dump_buffer_into_formatter(
-    literal: &str,
-    formatter: &mut fmt::Formatter,
-) -> fmt::Result {
+fn dump_buffer_into_formatter(literal: &str, formatter: &mut fmt::Formatter) -> fmt::Result {
     if literal.is_empty() {
         return Ok(());
     }
@@ -70,9 +69,9 @@ pub(crate) fn dump_buffer_into_formatter(
 
 /// This trait is implemented in order to provide the machinery to convert a [`Pattern`] to a UTS 35
 /// pattern string. It could also be implemented as the Writeable trait, but at the time of writing
-/// this was not done, as this code would need to implement the [`write_len()`] method, which would
-/// need to duplicate the branching logic of the [`fmt`](std::fmt) method here. This code is used in generating
-/// the data providers and is not as performance sensitive.
+/// this was not done, as this code would need to implement the [`writeable_length_hint()`] method,
+/// which would need to duplicate the branching logic of the [`fmt`](std::fmt) method here. This code
+/// is used in generating the data providers and is not as performance sensitive.
 impl fmt::Display for Pattern {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let mut buffer = String::new();
@@ -105,13 +104,7 @@ impl fmt::Display for GenericPattern {
                 GenericPatternItem::Placeholder(idx) => {
                     dump_buffer_into_formatter(&buffer, formatter)?;
                     buffer.clear();
-                    #[allow(clippy::expect_used)]
-                    // TODO(#1668) Clippy exceptions need docs or fixing.
-                    let idx = char::from_digit(*idx as u32, 10)
-                        .expect("Failed to convert placeholder idx to char");
-                    formatter.write_char('{')?;
-                    formatter.write_char(idx)?;
-                    formatter.write_char('}')?;
+                    write!(formatter, "{{{idx}}}")?;
                 }
                 GenericPatternItem::Literal(ch) => {
                     buffer.push(*ch);

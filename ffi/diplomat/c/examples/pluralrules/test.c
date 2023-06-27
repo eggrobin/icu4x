@@ -3,24 +3,24 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 #include "../../include/ICU4XPluralRules.h"
+#include "../../include/ICU4XLogger.h"
 #include <string.h>
 #include <stdio.h>
 
-const char* path = "../../../../../provider/testdata/data/json/";
 int main() {
-    ICU4XLocale* locale = ICU4XLocale_create("ar", 2);
-    ICU4XCreateDataProviderResult result = ICU4XDataProvider_create_fs(path, strlen(path));
-    if (!result.success) {
-        printf("Failed to create FsDataProvider\n");
+    ICU4XLogger_init_simple_logger();
+    diplomat_result_box_ICU4XLocale_ICU4XError locale_result = ICU4XLocale_create_from_string("ar", 2);
+    if (!locale_result.is_ok) {
         return 1;
     }
-    ICU4XDataProvider* provider = result.provider;
-    ICU4XCreatePluralRulesResult plural_result = ICU4XPluralRules_try_new_cardinal(locale, provider);
-    if (!plural_result.success) {
+    ICU4XLocale* locale = locale_result.ok;
+    ICU4XDataProvider* provider = ICU4XDataProvider_create_test();
+    diplomat_result_box_ICU4XPluralRules_ICU4XError plural_result = ICU4XPluralRules_create_cardinal(provider, locale);
+    if (!plural_result.is_ok) {
         printf("Failed to create PluralRules\n");
         return 1;
     }
-    ICU4XPluralRules* rules = plural_result.rules;
+    ICU4XPluralRules* rules = plural_result.ok;
 
     ICU4XPluralCategories categories = ICU4XPluralRules_categories(rules);
     printf("Plural Category zero  (should be true): %s\n", categories.zero  ? "true" : "false");
@@ -30,20 +30,25 @@ int main() {
     printf("Plural Category many  (should be true): %s\n", categories.many  ? "true" : "false");
     printf("Plural Category other (should be true): %s\n", categories.other ? "true" : "false");
 
-    ICU4XPluralOperands op1 = { .i = 3 };
+    diplomat_result_box_ICU4XPluralOperands_ICU4XError op1_result = ICU4XPluralOperands_create_from_string("3", 1);
 
-    ICU4XPluralCategory cat1 = ICU4XPluralRules_select(rules, op1);
-
-    printf("Plural Category %d (should be %d)\n", (int)cat1, (int)ICU4XPluralCategory_Few);
-
-    ICU4XCreatePluralOperandsResult op_result = ICU4XPluralOperands_create("1011.0", 6);
-
-    if (!op_result.success) {
+    if (!op1_result.is_ok) {
         printf("Failed to create PluralOperands from string\n");
         return 1;
     }
 
-    ICU4XPluralCategory cat2 = ICU4XPluralRules_select(rules, op_result.operands);
+    ICU4XPluralCategory cat1 = ICU4XPluralRules_category_for(rules, op1_result.ok);
+
+    printf("Plural Category %d (should be %d)\n", (int)cat1, (int)ICU4XPluralCategory_Few);
+
+    diplomat_result_box_ICU4XPluralOperands_ICU4XError op2_result = ICU4XPluralOperands_create_from_string("1011.0", 6);
+
+    if (!op2_result.is_ok) {
+        printf("Failed to create PluralOperands from string\n");
+        return 1;
+    }
+
+    ICU4XPluralCategory cat2 = ICU4XPluralRules_category_for(rules, op2_result.ok);
 
     printf("Plural Category %d (should be %d)\n", (int)cat2, (int)ICU4XPluralCategory_Many);
 

@@ -2,182 +2,95 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-#![allow(unused_imports)]
-
 use icu_locid::langid;
-use icu_locid::LanguageIdentifier;
-use icu_plurals::{provider::*, rules::runtime::ast::Rule};
+use icu_provider::datagen::IterableDataProvider;
+use icu_provider::hello_world::{HelloWorldProvider, HelloWorldV1, HelloWorldV1Marker};
 use icu_provider::prelude::*;
-use icu_provider::serde::*;
 use icu_provider_fs::FsDataProvider;
-use std::borrow::Cow;
 
-#[derive(Debug, PartialEq)]
-struct PluralRulesTestData {
-    zero: Option<&'static str>,
-    one: Option<&'static str>,
-    two: Option<&'static str>,
-    few: Option<&'static str>,
-    many: Option<&'static str>,
-}
+const JSON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/json");
+const BINCODE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/bincode");
+const POSTCARD_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/postcard");
 
-impl From<&PluralRulesTestData> for PluralRulesV1<'_> {
-    fn from(i: &PluralRulesTestData) -> Self {
-        fn parse(i: &'static str) -> Rule {
-            i.parse().expect("Failed to parse rule")
-        }
-        Self {
-            zero: i.zero.map(parse),
-            one: i.one.map(parse),
-            two: i.two.map(parse),
-            few: i.few.map(parse),
-            many: i.many.map(parse),
+const PATHS: &[&str] = &[JSON_PATH, BINCODE_PATH, POSTCARD_PATH];
+
+#[test]
+fn test_provider() {
+    for path in PATHS {
+        let provider = FsDataProvider::try_new(path).unwrap();
+        for locale in HelloWorldProvider.supported_locales().unwrap() {
+            let req = DataRequest {
+                locale: &locale,
+                metadata: Default::default(),
+            };
+
+            let expected = HelloWorldProvider
+                .load(req)
+                .unwrap()
+                .take_payload()
+                .unwrap();
+
+            let actual: DataPayload<HelloWorldV1Marker> = provider
+                .as_deserializing()
+                .load(req)
+                .unwrap()
+                .take_payload()
+                .unwrap();
+            assert_eq!(actual.get(), expected.get());
+
+            let actual: DataPayload<HelloWorldV1Marker> = (&provider as &dyn BufferProvider)
+                .as_deserializing()
+                .load(req)
+                .unwrap()
+                .take_payload()
+                .unwrap();
+            assert_eq!(actual.get(), expected.get());
         }
     }
 }
 
-const EXPECTED_RU_DATA: PluralRulesTestData = PluralRulesTestData {
-    zero: None,
-    one: Some("v = 0 and i % 10 = 1 and i % 100 != 11"),
-    two: None,
-    few: Some("v = 0 and i % 10 = 2..4 and i % 100 != 12..14"),
-    many: Some("v = 0 and i % 10 = 0 or v = 0 and i % 10 = 5..9 or v = 0 and i % 100 = 11..14"),
-};
-
-const EXPECTED_SR_DATA: PluralRulesTestData = PluralRulesTestData {
-    zero: None,
-    one: Some("v = 0 and i % 10 = 1 and i % 100 != 11 or f % 10 = 1 and f % 100 != 11"),
-    two: None,
-    few: Some(
-        "v = 0 and i % 10 = 2..4 and i % 100 != 12..14 or f % 10 = 2..4 and f % 100 != 12..14",
-    ),
-    many: None,
-};
-
 #[test]
-fn test_json() {
-    let provider = FsDataProvider::try_new("./tests/testdata/json")
-        .expect("Loading file from testdata directory");
+fn test_errors() {
+    for path in PATHS {
+        let provider = FsDataProvider::try_new(path).unwrap();
 
-    let plurals_data: DataPayload<CardinalV1Marker> = provider
-        .load_resource(&DataRequest {
-            options: langid!("ru").into(),
-            metadata: Default::default(),
-        })
-        .expect("The data should be valid")
-        .take_payload()
-        .expect("The data should be present");
-    assert_eq!(plurals_data.get(), &PluralRulesV1::from(&EXPECTED_RU_DATA));
-}
-
-#[test]
-fn test_json_dyn_erased_serde() {
-    let provider = FsDataProvider::try_new("./tests/testdata/json")
-        .expect("Loading file from testdata directory");
-
-    let plurals_data: DataPayload<CardinalV1Marker> = (&provider as &dyn BufferProvider)
-        .as_deserializing()
-        .load_resource(&DataRequest {
-            options: langid!("ru").into(),
-            metadata: Default::default(),
-        })
-        .expect("The data should be valid")
-        .take_payload()
-        .expect("The data should be present");
-    assert_eq!(plurals_data.get(), &PluralRulesV1::from(&EXPECTED_RU_DATA));
-}
-
-#[test]
-fn test_json_errors() {
-    let provider = FsDataProvider::try_new("./tests/testdata/json")
-        .expect("Loading file from testdata directory");
-
-    type CardinalProvider = dyn ResourceProvider<CardinalV1Marker>;
-    type OrdinalProvider = dyn ResourceProvider<OrdinalV1Marker>;
-
-    assert!(matches!(
-        CardinalProvider::load_resource(
-            &provider,
-            &DataRequest {
-                options: langid!("ru").into(),
+        let err: Result<DataResponse<HelloWorldV1Marker>, DataError> =
+            provider.as_deserializing().load(DataRequest {
+                locale: &langid!("zh-DE").into(),
                 metadata: Default::default(),
-            },
-        ),
-        Ok(_)
-    ));
+            });
 
-    assert!(matches!(
-        CardinalProvider::load_resource(
-            &provider,
-            &DataRequest {
-                options: langid!("zh").into(),
-                metadata: Default::default(),
-            },
-        ),
-        Err(DataError {
-            kind: DataErrorKind::MissingResourceOptions,
-            ..
-        })
-    ));
+        assert!(
+            matches!(
+                err,
+                Err(DataError {
+                    kind: DataErrorKind::MissingLocale,
+                    ..
+                })
+            ),
+            "{err:?}"
+        );
 
-    assert!(matches!(
-        OrdinalProvider::load_resource(
-            &provider,
-            &DataRequest {
-                options: langid!("ru").into(),
-                metadata: Default::default(),
-            },
-        ),
-        Err(DataError {
-            kind: DataErrorKind::MissingResourceKey,
-            ..
-        })
-    ));
+        struct WrongV1Marker;
+        impl DataMarker for WrongV1Marker {
+            type Yokeable = HelloWorldV1<'static>;
+        }
+        impl KeyedDataMarker for WrongV1Marker {
+            const KEY: DataKey = data_key!("nope@1");
+        }
 
-    assert!(matches!(
-        OrdinalProvider::load_resource(
-            &provider,
-            &DataRequest {
-                options: langid!("ru").into(),
-                metadata: Default::default(),
-            },
-        ),
-        Err(DataError {
-            kind: DataErrorKind::MissingResourceKey,
-            ..
-        })
-    ));
-}
+        let err: Result<DataResponse<WrongV1Marker>, DataError> =
+            provider.as_deserializing().load(Default::default());
 
-#[test]
-fn test_bincode() {
-    let provider = FsDataProvider::try_new("./tests/testdata/bincode")
-        .expect("Loading file from testdata directory");
-
-    let plurals_data: DataPayload<CardinalV1Marker> = provider
-        .load_resource(&DataRequest {
-            options: langid!("sr").into(),
-            metadata: Default::default(),
-        })
-        .expect("The data should be valid")
-        .take_payload()
-        .expect("The data should be present");
-    assert_eq!(plurals_data.get(), &PluralRulesV1::from(&EXPECTED_SR_DATA));
-}
-
-#[test]
-fn test_bincode_dyn_erased_serde() {
-    let provider = FsDataProvider::try_new("./tests/testdata/bincode")
-        .expect("Loading file from testdata directory");
-
-    let plurals_data: DataPayload<CardinalV1Marker> = (&provider as &dyn BufferProvider)
-        .as_deserializing()
-        .load_resource(&DataRequest {
-            options: langid!("sr").into(),
-            metadata: Default::default(),
-        })
-        .expect("The data should be valid")
-        .take_payload()
-        .expect("The data should be present");
-    assert_eq!(plurals_data.get(), &PluralRulesV1::from(&EXPECTED_SR_DATA));
+        assert!(
+            matches!(
+                err,
+                Err(DataError {
+                    kind: DataErrorKind::MissingDataKey,
+                    ..
+                })
+            ),
+            "{err:?}"
+        );
+    }
 }

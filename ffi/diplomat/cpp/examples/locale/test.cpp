@@ -3,12 +3,13 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 #include "../../include/ICU4XLocale.hpp"
+#include "../../include/ICU4XLogger.hpp"
 
 #include <iostream>
 
 static bool test_locale(ICU4XLocale &locale, std::string_view expectedString,
                         const char *message) {
-  std::string_view actualString = locale.tostring().ok().value();
+  std::string actualString = locale.to_string().ok().value();
   std::cout << message << ": \"" << actualString << "\"" << std::endl;
   if (actualString != expectedString) {
     std::cout << "Locale did not match expected: \"" << expectedString << "\""
@@ -30,7 +31,8 @@ static bool test_string(std::string_view actualString,
 }
 
 int main() {
-  ICU4XLocale locale = ICU4XLocale::create("es-ES").value();
+  ICU4XLogger::init_simple_logger();
+  ICU4XLocale locale = ICU4XLocale::create_from_string("es-ES").ok().value();
   if (!test_locale(locale, "es-ES", "Created a locale")) {
     return 1;
   }
@@ -86,7 +88,7 @@ int main() {
     return 1;
   }
 
-  locale = ICU4XLocale::create("en-US-u-hc-h12").value();
+  locale = ICU4XLocale::create_from_string("en-US-u-hc-h12").ok().value();
   if (!test_string(locale.get_unicode_extension("hc").ok().value(), "h12",
                    "The unicode extension can be accessed")) {
     return 1;
@@ -96,7 +98,7 @@ int main() {
     return 1;
   }
 
-  locale = ICU4XLocale::und();
+  locale = ICU4XLocale::create_und();
   if (!test_locale(locale, "und", "Created an undefined locale")) {
     return 1;
   }

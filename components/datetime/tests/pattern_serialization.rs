@@ -4,7 +4,7 @@
 
 #![cfg(all(test, feature = "datagen"))]
 
-use icu_datetime::pattern::reference::Pattern;
+use icu_datetime::pattern::reference;
 use std::{fs::File, io::BufReader};
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -53,23 +53,17 @@ fn test_pattern_json_serialization_roundtrip() {
         // Wrap the string in quotes so it's a JSON string.
         let json_in: String = serde_json::to_string(pattern_string).unwrap();
 
-        let pattern: Pattern = match serde_json::from_str(&json_in) {
+        let pattern: reference::Pattern = match serde_json::from_str(&json_in) {
             Ok(p) => p,
             Err(err) => {
-                panic!(
-                    "Unable to parse the pattern {:?}. {:?}",
-                    pattern_string, err
-                );
+                panic!("Unable to parse the pattern {pattern_string:?}. {err:?}");
             }
         };
 
         let json_out = match serde_json::to_string(&pattern) {
             Ok(s) => s,
             Err(err) => {
-                panic!(
-                    "Unable to re-serialize the pattern {:?}. {:?}",
-                    pattern_string, err
-                );
+                panic!("Unable to re-serialize the pattern {pattern_string:?}. {err:?}",);
             }
         };
 
@@ -107,13 +101,10 @@ fn test_pattern_bincode_serialization_roundtrip() {
         // Wrap the string in quotes so it's a JSON string.
         let json_in: String = serde_json::to_string(pattern_string).unwrap();
 
-        let pattern: Pattern = match serde_json::from_str(&json_in) {
+        let pattern: reference::Pattern = match serde_json::from_str(&json_in) {
             Ok(p) => p,
             Err(err) => {
-                panic!(
-                    "Unable to parse the pattern {:?}. {:?}",
-                    pattern_string, err
-                );
+                panic!("Unable to parse the pattern {pattern_string:?}. {err:?}");
             }
         };
 
@@ -122,12 +113,11 @@ fn test_pattern_bincode_serialization_roundtrip() {
         if let Some(ref expect_vec) = expect_vec {
             if bincode != *expect_vec.get(i).unwrap() {
                 panic!(
-                    "The bincode representations of the pattern {:?} did not match the stored \
+                    "The bincode representations of the pattern {json_in:?} did not match the stored \
                      representation. Patterns are supposed to have stable bincode representations. \
                      Something changed to make it different than what it was in the past. If this is \
                      expected, then the bincode can be updated by re-running the test with the \
-                     environment variable ICU4X_REGEN_FIXTURE set.",
-                    json_in
+                     environment variable ICU4X_REGEN_FIXTURE set."
                 )
             }
         }
@@ -148,10 +138,10 @@ fn test_pattern_json_errors() {
         let json_in: String = serde_json::to_string(pattern).unwrap();
 
         // Wrap the string in quotes so it's a JSON string.
-        match serde_json::from_str::<Pattern>(&json_in) {
-            Ok(_) => panic!("Expected an invalid pattern. {}", json_in),
+        match serde_json::from_str::<reference::Pattern>(&json_in) {
+            Ok(_) => panic!("Expected an invalid pattern. {json_in}"),
             Err(serde_err) => {
-                assert_eq!(format!("{}", serde_err), *error);
+                assert_eq!(format!("{serde_err}"), *error);
             }
         };
     }

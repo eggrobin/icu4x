@@ -6,11 +6,11 @@ use super::{MutableZeroVecLike, ZeroMap, ZeroMapBorrowed, ZeroMapKV, ZeroVecLike
 use core::fmt;
 use core::marker::PhantomData;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
-#[cfg(feature = "serde_serialize")]
+#[cfg(feature = "serde")]
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 
-/// This impl can be made available by enabling the optional `serde_serialize` feature of the `zerovec` crate
-#[cfg(feature = "serde_serialize")]
+/// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
+#[cfg(feature = "serde")]
 impl<'a, K, V> Serialize for ZeroMap<'a, K, V>
 where
     K: ZeroMapKV<'a> + Serialize + ?Sized + Ord,
@@ -27,8 +27,7 @@ where
             // than numbers and strings as map keys. For them, we can serialize
             // as a vec of tuples instead
             if let Some(k) = self.iter_keys().next() {
-                let json = K::Container::zvl_get_as_t(k, |k| serde_json::json!(k));
-                if !json.is_string() && !json.is_number() {
+                if !K::Container::zvl_get_as_t(k, super::serde_helpers::is_num_or_string) {
                     let mut seq = serializer.serialize_seq(Some(self.len()))?;
                     for (k, v) in self.iter() {
                         K::Container::zvl_get_as_t(k, |k| {
@@ -50,8 +49,8 @@ where
     }
 }
 
-/// This impl can be made available by enabling the optional `serde_serialize` feature of the `zerovec` crate
-#[cfg(feature = "serde_serialize")]
+/// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
+#[cfg(feature = "serde")]
 impl<'a, K, V> Serialize for ZeroMapBorrowed<'a, K, V>
 where
     K: ZeroMapKV<'a> + Serialize + ?Sized + Ord,
@@ -159,7 +158,7 @@ where
     }
 }
 
-/// This impl can be made available by enabling the optional `serde` feature of the `zerovec` crate
+/// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
 impl<'de, 'a, K, V> Deserialize<'de> for ZeroMap<'a, K, V>
 where
     K: ZeroMapKV<'a> + Ord + ?Sized,
@@ -191,7 +190,7 @@ where
     }
 }
 
-// /// This impl can be made available by enabling the optional `serde` feature of the `zerovec` crate
+// /// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
 impl<'de, 'a, K, V> Deserialize<'de> for ZeroMapBorrowed<'a, K, V>
 where
     K: ZeroMapKV<'a> + Ord + ?Sized,
@@ -250,8 +249,8 @@ mod test {
 
     const JSON_STR: &str = "{\"1\":\"uno\",\"2\":\"dos\",\"3\":\"tres\"}";
     const BINCODE_BYTES: &[u8] = &[
-        12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0, 3, 0,
-        0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 6, 0, 0, 0, 117, 110, 111, 100, 111, 115, 116, 114, 101, 115,
+        12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 3, 0,
+        0, 0, 0, 0, 3, 0, 6, 0, 117, 110, 111, 100, 111, 115, 116, 114, 101, 115,
     ];
 
     fn make_map() -> ZeroMap<'static, u32, str> {

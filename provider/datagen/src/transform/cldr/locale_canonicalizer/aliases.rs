@@ -2,96 +2,57 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use crate::error::DatagenError;
 use crate::transform::cldr::cldr_serde;
-use crate::transform::cldr::reader::open_reader;
-use crate::SourceData;
-use icu_locale_canonicalizer::provider::*;
-use icu_locid::{language, subtags, LanguageIdentifier};
-use icu_provider::datagen::IterableResourceProvider;
+use icu_locid::{subtags, subtags_language as language, LanguageIdentifier};
+use icu_locid_transform::provider::*;
+use icu_provider::datagen::IterableDataProvider;
 use icu_provider::prelude::*;
+use std::collections::BTreeMap;
 use tinystr::TinyAsciiStr;
-use zerovec::{ZeroMap, ZeroSlice};
+use zerovec::ZeroSlice;
 
-/// A data provider reading from CLDR JSON likely subtags rule files.
-#[derive(Debug)]
-pub struct AliasesProvider {
-    source: SourceData,
-}
-
-impl From<&SourceData> for AliasesProvider {
-    fn from(source: &SourceData) -> Self {
-        AliasesProvider {
-            source: source.clone(),
-        }
-    }
-}
-
-impl ResourceProvider<AliasesV1Marker> for AliasesProvider {
-    fn load_resource(&self, req: &DataRequest) -> Result<DataResponse<AliasesV1Marker>, DataError> {
-        // We treat searching for `und` as a request for all data. Other requests
-        // are not currently supported.
-        if !req.options.is_empty() {
-            return Err(DataErrorKind::ExtraneousResourceOptions.into_error());
-        }
-
-        let path = self
+impl DataProvider<AliasesV1Marker> for crate::DatagenProvider {
+    fn load(&self, req: DataRequest) -> Result<DataResponse<AliasesV1Marker>, DataError> {
+        self.check_req::<AliasesV1Marker>(req)?;
+        let data: &cldr_serde::aliases::Resource = self
             .source
-            .get_cldr_paths()?
-            .cldr_core()
-            .join("supplemental")
-            .join("aliases.json");
-        let data: cldr_serde::aliases::Resource = serde_json::from_reader(open_reader(&path)?)
-            .map_err(|e| DatagenError::from((e, path)))?;
-
-        let metadata = DataResponseMetadata::default();
-        // TODO(#1109): Set metadata.data_langid correctly.
+            .cldr()?
+            .core()
+            .read_and_parse("supplemental/aliases.json")?;
         Ok(DataResponse {
-            metadata,
-            payload: Some(DataPayload::from_owned(AliasesV1::from(&data))),
+            metadata: Default::default(),
+            payload: Some(DataPayload::from_owned(AliasesV1::from(data))),
         })
     }
 }
 
-icu_provider::impl_dyn_provider!(
-    AliasesProvider,
-    [AliasesV1Marker,],
-    SERDE_SE,
-    ITERABLE_SERDE_SE,
-    DATA_CONVERTER
-);
-
-impl IterableResourceProvider<AliasesV1Marker> for AliasesProvider {
-    fn supported_options(&self) -> Result<Box<dyn Iterator<Item = ResourceOptions>>, DataError> {
-        Ok(Box::new(core::iter::once(ResourceOptions::default())))
+impl IterableDataProvider<AliasesV1Marker> for crate::DatagenProvider {
+    fn supported_locales(&self) -> Result<Vec<DataLocale>, DataError> {
+        Ok(vec![Default::default()])
     }
 }
 
-// The size of the union of all field value sets.
-fn union_size(langid: &LanguageIdentifier) -> usize {
-    let mut size = langid.variants.len();
+// Sort rules following algorithm in Preprocessing, step 5 of Appendix C:
+//   - the size of the union of all field value sets, with largest size first
+//   - alphabetically by each field
+fn appendix_c_cmp(langid: &LanguageIdentifier) -> impl Ord {
+    let mut union_size = langid.variants.len() as i8;
     if !langid.language.is_empty() {
-        size += 1;
+        union_size += 1;
     }
     if langid.script.is_some() {
-        size += 1;
+        union_size += 1;
     }
     if langid.region.is_some() {
-        size += 1;
+        union_size += 1;
     }
-    size
-}
-
-// Sort rules by size of union of field sets and alphabeticaly
-// following rules in Preprocessing, step 5 of Appendix C.
-fn rules_cmp(a: &LanguageIdentifier, b: &LanguageIdentifier) -> std::cmp::Ordering {
-    let size_a = union_size(a);
-    let size_b = union_size(b);
-    if size_a == size_b {
-        a.cmp(b)
-    } else {
-        size_b.cmp(&size_a)
-    }
+    (
+        -union_size,
+        langid.language,
+        langid.script,
+        langid.region,
+        langid.variants.clone(),
+    )
 }
 
 impl From<&cldr_serde::aliases::Resource> for AliasesV1<'_> {
@@ -103,28 +64,28 @@ impl From<&cldr_serde::aliases::Resource> for AliasesV1<'_> {
         // a special case, but we retain the catchall language category in case new or
         // customized CLDR data is used.
         let mut language_variants = Vec::new();
-        let mut sgn_region = ZeroMap::new();
-        let mut language_len2 = ZeroMap::new();
-        let mut language_len3 = ZeroMap::new();
+        let mut sgn_region = BTreeMap::new();
+        let mut language_len2 = BTreeMap::new();
+        let mut language_len3 = BTreeMap::new();
         let mut language = Vec::new();
 
-        let mut script = ZeroMap::new();
+        let mut script = BTreeMap::new();
 
         // There are many more aliases for numeric region codes than for alphabetic,
         // so by storing them separately, we can minimize comparisons for alphabetic codes.
-        let mut region_alpha = ZeroMap::new();
-        let mut region_num = ZeroMap::new();
+        let mut region_alpha = BTreeMap::new();
+        let mut region_num = BTreeMap::new();
 
         // Complex regions are cases similar to the Soviet Union, where an old region
         // is replaced by multiple new regions. Determining the new region requires using
         // likely subtags. Many implementations preprocess the complex regions into simple
         // regions as part of data import, but that would introduce a dependency between
         // CDLR providers that we're not currently set up to handle.
-        let mut complex_region = ZeroMap::new();
+        let mut complex_region = BTreeMap::new();
 
-        let mut variant = ZeroMap::new();
+        let mut variant = BTreeMap::new();
 
-        let mut subdivision = ZeroMap::new();
+        let mut subdivision = BTreeMap::new();
 
         // Step 2. Capture all languageAlias rules where the type is an invalid languageId
         // into a set of BCP47 LegacyRules. This implementation discards these.
@@ -146,20 +107,22 @@ impl From<&cldr_serde::aliases::Resource> for AliasesV1<'_> {
                             // Relatively few aliases exist for two character language identifiers,
                             // so we store them separately to not slow down canonicalization of
                             // common identifiers.
-                            let lang: TinyAsciiStr<3> = langid.language.into();
+                            let lang = langid.language.into_tinystr();
                             if lang.len() == 2 {
-                                language_len2.insert(&lang.resize(), to.replacement.as_str());
+                                language_len2.insert(lang.resize(), to.replacement.as_str());
                             } else {
-                                language_len3.insert(&lang, to.replacement.as_str());
+                                language_len3.insert(lang, to.replacement.as_str());
                             }
                         }
                         // sgn-<region> -> <language>
                         (language, None, Some(region), false)
                             if language == language!("sgn")
                                 && !replacement.language.is_empty()
-                                && replacement == replacement.language.as_str() =>
+                                && replacement.script.is_none()
+                                && replacement.region.is_none()
+                                && replacement.variants.is_empty() =>
                         {
-                            sgn_region.insert(&region.into(), &replacement.language);
+                            sgn_region.insert(region.into_tinystr(), replacement.language);
                         }
                         _ => language.push((langid, replacement)),
                     }
@@ -179,7 +142,7 @@ impl From<&cldr_serde::aliases::Resource> for AliasesV1<'_> {
             }
 
             if let Ok(to) = to.replacement.parse::<subtags::Script>() {
-                script.insert(from, &to);
+                script.insert(from, to);
             }
         }
 
@@ -192,126 +155,124 @@ impl From<&cldr_serde::aliases::Resource> for AliasesV1<'_> {
 
             if let Ok(replacement) = to.replacement.parse::<subtags::Region>() {
                 if from.is_ascii_alphabetic() {
-                    region_alpha.insert(&from.resize(), &replacement);
+                    region_alpha.insert(from.resize(), replacement);
                 } else {
-                    region_num.insert(from, &replacement);
+                    region_num.insert(from, replacement);
                 }
             } else {
                 complex_region.insert(
                     from,
-                    ZeroSlice::from_boxed_slice(
-                        to.replacement
-                            .split(' ')
-                            .into_iter()
-                            .filter_map(|r| r.parse::<subtags::Region>().ok())
-                            .collect::<Box<[_]>>(),
-                    )
-                    .as_ref(),
+                    to.replacement
+                        .split(' ')
+                        .filter_map(|r| r.parse::<subtags::Region>().ok())
+                        .collect::<Box<[_]>>(),
                 );
             }
         }
 
         for (from, to) in other.supplemental.metadata.alias.variant_aliases.iter() {
             if let Ok(to) = to.replacement.parse::<subtags::Variant>() {
-                variant.insert(from, &to);
+                variant.insert(from, to);
             }
         }
 
         for (from, to) in other.supplemental.metadata.alias.subdivision_aliases.iter() {
-            if let Some(replacement) = to
-                .replacement
-                .split(' ')
-                .into_iter()
-                .filter_map(|r| {
-                    if r.len() == 2 {
-                        // Following http://unicode.org/reports/tr35/#Canonical_Unicode_Locale_Identifiers,
-                        // append "zzzz" to make this syntactically correct.
-                        let replacement = r.to_string().to_ascii_lowercase() + "zzzz";
-                        <TinyAsciiStr<7>>::from_bytes(replacement.as_bytes()).ok()
-                    } else {
-                        <TinyAsciiStr<7>>::from_bytes(r.as_bytes()).ok()
-                    }
-                })
-                .next()
-            {
-                subdivision.insert(from, &replacement);
+            if let Some(replacement) = to.replacement.split(' ').find_map(|r| {
+                if r.len() == 2 {
+                    // Following http://unicode.org/reports/tr35/#Canonical_Unicode_Locale_Identifiers,
+                    // append "zzzz" to make this syntactically correct.
+                    let replacement = r.to_string().to_ascii_lowercase() + "zzzz";
+                    TinyAsciiStr::<7>::from_str(&replacement).ok()
+                } else {
+                    TinyAsciiStr::<7>::from_str(r).ok()
+                }
+            }) {
+                subdivision.insert(from, replacement);
             }
         }
 
-        // 5. Order the set of rules by
-        //      1. the size of the union of all field value sets, with largest size first
-        //      2. and then alphabetically by field.
-        language_variants.sort_unstable_by(|a, b| rules_cmp(&a.0, &b.0));
-        language.sort_unstable_by(|a, b| rules_cmp(&a.0, &b.0));
+        // 5. Sort the non-special-cased rules
+        language_variants.sort_unstable_by_key(|(langid, _)| appendix_c_cmp(langid));
+        language.sort_unstable_by_key(|(langid, _)| appendix_c_cmp(langid));
 
-        let language_variants = zerovec::VarZeroVec::Owned(
-            zerovec::vecs::VarZeroVecOwned::try_from_elements(
-                &language_variants
-                    .into_iter()
-                    .map(|(from, to)| StrStrPair(from.to_string().into(), to.to_string().into()))
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap(),
-        );
-
-        let language = zerovec::VarZeroVec::Owned(
-            zerovec::vecs::VarZeroVecOwned::try_from_elements(
-                &language
-                    .into_iter()
-                    .map(|(from, to)| StrStrPair(from.to_string().into(), to.to_string().into()))
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap(),
-        );
+        let language_variants = language_variants
+            .iter()
+            .map(|(from, to)| StrStrPair(from.to_string().into(), to.to_string().into()))
+            .collect::<Vec<_>>();
+        let language = language
+            .iter()
+            .map(|(from, to)| StrStrPair(from.to_string().into(), to.to_string().into()))
+            .collect::<Vec<_>>();
 
         Self {
-            language_variants,
-            sgn_region,
-            language_len2,
-            language_len3,
-            language,
+            language_variants: language_variants.as_slice().into(),
+            sgn_region: sgn_region
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), v))
+                .collect(),
+            language_len2: language_len2
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), v))
+                .collect(),
+            language_len3: language_len3
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), v))
+                .collect(),
+            language: language.as_slice().into(),
 
-            script,
+            script: script
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), v))
+                .collect(),
 
-            region_alpha,
-            region_num,
-            complex_region,
+            region_alpha: region_alpha
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), v))
+                .collect(),
+            region_num: region_num
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), v))
+                .collect(),
+            complex_region: complex_region
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), ZeroSlice::from_boxed_slice(v)))
+                .collect(),
 
-            variant,
+            variant: variant
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), v))
+                .collect(),
 
-            subdivision,
+            subdivision: subdivision
+                .into_iter()
+                .map(|(k, v)| (k.to_unvalidated(), v))
+                .collect(),
         }
     }
 }
 
 #[test]
-fn test_rules_cmp() {
-    let mut rules: Vec<LanguageIdentifier> = vec![
-        icu_locid::langid!("en-GB"),
-        icu_locid::langid!("CA"),
-        "und-hepburn-heploc".parse().unwrap(),
-        icu_locid::langid!("fr-CA"),
-    ];
+fn test_appendix_c_cmp() {
+    let en = icu_locid::langid!("en-GB");
+    let ca = icu_locid::langid!("ca");
+    let und = "und-hepburn-heploc".parse::<LanguageIdentifier>().unwrap();
+    let fr = icu_locid::langid!("fr-CA");
 
-    assert_eq!(union_size(&rules[0]), 2);
-    assert_eq!(union_size(&rules[1]), 1);
-    assert_eq!(union_size(&rules[2]), 2);
-    assert_eq!(union_size(&rules[3]), 2);
+    let mut rules = vec![&en, &ca, &und, &fr];
+    rules.sort_unstable_by_key(|&l| appendix_c_cmp(l));
 
-    rules.sort_unstable_by(rules_cmp);
-    assert_eq!(rules[0], "en-GB");
-    assert_eq!(rules[1], "fr-CA");
-    assert_eq!(rules[2], "und-hepburn-heploc");
-    assert_eq!(rules[3], "CA");
+    assert_eq!(rules, &[&en, &fr, &und, &ca]);
 }
 
 #[test]
 fn test_basic() {
-    use tinystr::tinystr;
+    use icu_locid::{
+        subtags_language as language, subtags_region as region, subtags_script as script,
+    };
 
-    let provider = AliasesProvider::from(&SourceData::for_test());
+    let provider = crate::DatagenProvider::for_test();
     let data: DataPayload<AliasesV1Marker> = provider
-        .load_resource(&DataRequest::default())
+        .load(Default::default())
         .unwrap()
         .take_payload()
         .unwrap();
@@ -334,19 +295,32 @@ fn test_basic() {
     // Spot check a few expected results. There are more extensive tests in the
     // locale canonicalizer itself.
     assert_eq!(
-        data.get().language_len2.get(&tinystr!(2, "iw")).unwrap(),
+        data.get()
+            .language_len2
+            .get(&language!("iw").into_tinystr().resize().to_unvalidated())
+            .unwrap(),
         "he"
     );
 
-    assert!(data.get().language_len3.get(&tinystr!(3, "iw")).is_none());
+    assert!(data
+        .get()
+        .language_len3
+        .get(&language!("iw").into_tinystr().to_unvalidated())
+        .is_none());
 
     assert_eq!(
         data.get().script.iter().next().unwrap(),
-        (&tinystr!(4, "Qaai"), &icu_locid::script!("Zinh"))
+        (
+            &script!("Qaai").into_tinystr().to_unvalidated(),
+            &icu_locid::subtags_script!("Zinh")
+        )
     );
 
     assert_eq!(
-        data.get().region_num.get(&tinystr!(3, "768")).unwrap(),
-        &icu_locid::region!("TG")
+        data.get()
+            .region_num
+            .get(&region!("768").into_tinystr().to_unvalidated())
+            .unwrap(),
+        &icu_locid::subtags_region!("TG")
     );
 }

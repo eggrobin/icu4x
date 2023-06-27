@@ -9,14 +9,13 @@
 #include <optional>
 #include "diplomat_runtime.hpp"
 
-namespace capi {
 #include "ICU4XPluralRules.h"
-}
 
-class ICU4XLocale;
 class ICU4XDataProvider;
-struct ICU4XCreatePluralRulesResult;
-struct ICU4XPluralOperands;
+class ICU4XLocale;
+class ICU4XPluralRules;
+#include "ICU4XError.hpp"
+class ICU4XPluralOperands;
 #include "ICU4XPluralCategory.hpp"
 struct ICU4XPluralCategories;
 
@@ -32,36 +31,36 @@ struct ICU4XPluralRulesDeleter {
 /**
  * FFI version of `PluralRules`.
  * 
- * See the [Rust documentation](https://unicode-org.github.io/icu4x-docs/doc/icu_plurals/struct.PluralRules.html) for more information.
+ * See the [Rust documentation for `PluralRules`](https://docs.rs/icu/latest/icu/plurals/struct.PluralRules.html) for more information.
  */
 class ICU4XPluralRules {
  public:
 
   /**
-   * FFI version of `PluralRules::try_new_cardinal()`.
+   * Construct an [`ICU4XPluralRules`] for the given locale, for cardinal numbers
    * 
-   * See the [Rust documentation](https://unicode-org.github.io/icu4x-docs/doc/icu_plurals/struct.PluralRules.html#method.try_new) for more information.
+   * See the [Rust documentation for `try_new_cardinal_unstable`](https://docs.rs/icu/latest/icu/plurals/struct.PluralRules.html#method.try_new_cardinal_unstable) for more information.
    */
-  static ICU4XCreatePluralRulesResult try_new_cardinal(const ICU4XLocale& locale, const ICU4XDataProvider& provider);
+  static diplomat::result<ICU4XPluralRules, ICU4XError> create_cardinal(const ICU4XDataProvider& provider, const ICU4XLocale& locale);
 
   /**
-   * FFI version of `PluralRules::try_new_ordinal()`.
+   * Construct an [`ICU4XPluralRules`] for the given locale, for ordinal numbers
    * 
-   * See the [Rust documentation](https://unicode-org.github.io/icu4x-docs/doc/icu_plurals/struct.PluralRules.html#method.try_new) for more information.
+   * See the [Rust documentation for `try_new_ordinal_unstable`](https://docs.rs/icu/latest/icu/plurals/struct.PluralRules.html#method.try_new_ordinal_unstable) for more information.
    */
-  static ICU4XCreatePluralRulesResult try_new_ordinal(const ICU4XLocale& locale, const ICU4XDataProvider& provider);
+  static diplomat::result<ICU4XPluralRules, ICU4XError> create_ordinal(const ICU4XDataProvider& provider, const ICU4XLocale& locale);
 
   /**
-   * FFI version of `PluralRules::select()`.
+   * Get the category for a given number represented as operands
    * 
-   * See the [Rust documentation](https://unicode-org.github.io/icu4x-docs/doc/icu_plurals/struct.PluralRules.html#method.select) for more information.
+   * See the [Rust documentation for `category_for`](https://docs.rs/icu/latest/icu/plurals/struct.PluralRules.html#method.category_for) for more information.
    */
-  ICU4XPluralCategory select(ICU4XPluralOperands op) const;
+  ICU4XPluralCategory category_for(const ICU4XPluralOperands& op) const;
 
   /**
-   * FFI version of `PluralRules::categories()`.
+   * Get all of the categories needed in the current locale
    * 
-   * See the [Rust documentation](https://unicode-org.github.io/icu4x-docs/doc/icu_plurals/struct.PluralRules.html#method.categories) for more information.
+   * See the [Rust documentation for `categories`](https://docs.rs/icu/latest/icu/plurals/struct.PluralRules.html#method.categories) for more information.
    */
   ICU4XPluralCategories categories() const;
   inline const capi::ICU4XPluralRules* AsFFI() const { return this->inner.get(); }
@@ -74,37 +73,33 @@ class ICU4XPluralRules {
   std::unique_ptr<capi::ICU4XPluralRules, ICU4XPluralRulesDeleter> inner;
 };
 
-#include "ICU4XLocale.hpp"
 #include "ICU4XDataProvider.hpp"
-#include "ICU4XCreatePluralRulesResult.hpp"
+#include "ICU4XLocale.hpp"
 #include "ICU4XPluralOperands.hpp"
 #include "ICU4XPluralCategories.hpp"
 
-inline ICU4XCreatePluralRulesResult ICU4XPluralRules::try_new_cardinal(const ICU4XLocale& locale, const ICU4XDataProvider& provider) {
-  capi::ICU4XCreatePluralRulesResult diplomat_raw_struct_out_value = capi::ICU4XPluralRules_try_new_cardinal(locale.AsFFI(), provider.AsFFI());
-  auto diplomat_optional_raw_out_value_rules = diplomat_raw_struct_out_value.rules;
-  std::optional<ICU4XPluralRules> diplomat_optional_out_value_rules;
-  if (diplomat_optional_raw_out_value_rules != nullptr) {
-    diplomat_optional_out_value_rules = ICU4XPluralRules(diplomat_optional_raw_out_value_rules);
+inline diplomat::result<ICU4XPluralRules, ICU4XError> ICU4XPluralRules::create_cardinal(const ICU4XDataProvider& provider, const ICU4XLocale& locale) {
+  auto diplomat_result_raw_out_value = capi::ICU4XPluralRules_create_cardinal(provider.AsFFI(), locale.AsFFI());
+  diplomat::result<ICU4XPluralRules, ICU4XError> diplomat_result_out_value;
+  if (diplomat_result_raw_out_value.is_ok) {
+    diplomat_result_out_value = diplomat::Ok<ICU4XPluralRules>(std::move(ICU4XPluralRules(diplomat_result_raw_out_value.ok)));
   } else {
-    diplomat_optional_out_value_rules = std::nullopt;
+    diplomat_result_out_value = diplomat::Err<ICU4XError>(std::move(static_cast<ICU4XError>(diplomat_result_raw_out_value.err)));
   }
-  return ICU4XCreatePluralRulesResult{ .rules = std::move(diplomat_optional_out_value_rules), .success = std::move(diplomat_raw_struct_out_value.success) };
+  return diplomat_result_out_value;
 }
-inline ICU4XCreatePluralRulesResult ICU4XPluralRules::try_new_ordinal(const ICU4XLocale& locale, const ICU4XDataProvider& provider) {
-  capi::ICU4XCreatePluralRulesResult diplomat_raw_struct_out_value = capi::ICU4XPluralRules_try_new_ordinal(locale.AsFFI(), provider.AsFFI());
-  auto diplomat_optional_raw_out_value_rules = diplomat_raw_struct_out_value.rules;
-  std::optional<ICU4XPluralRules> diplomat_optional_out_value_rules;
-  if (diplomat_optional_raw_out_value_rules != nullptr) {
-    diplomat_optional_out_value_rules = ICU4XPluralRules(diplomat_optional_raw_out_value_rules);
+inline diplomat::result<ICU4XPluralRules, ICU4XError> ICU4XPluralRules::create_ordinal(const ICU4XDataProvider& provider, const ICU4XLocale& locale) {
+  auto diplomat_result_raw_out_value = capi::ICU4XPluralRules_create_ordinal(provider.AsFFI(), locale.AsFFI());
+  diplomat::result<ICU4XPluralRules, ICU4XError> diplomat_result_out_value;
+  if (diplomat_result_raw_out_value.is_ok) {
+    diplomat_result_out_value = diplomat::Ok<ICU4XPluralRules>(std::move(ICU4XPluralRules(diplomat_result_raw_out_value.ok)));
   } else {
-    diplomat_optional_out_value_rules = std::nullopt;
+    diplomat_result_out_value = diplomat::Err<ICU4XError>(std::move(static_cast<ICU4XError>(diplomat_result_raw_out_value.err)));
   }
-  return ICU4XCreatePluralRulesResult{ .rules = std::move(diplomat_optional_out_value_rules), .success = std::move(diplomat_raw_struct_out_value.success) };
+  return diplomat_result_out_value;
 }
-inline ICU4XPluralCategory ICU4XPluralRules::select(ICU4XPluralOperands op) const {
-  ICU4XPluralOperands diplomat_wrapped_struct_op = op;
-  return static_cast<ICU4XPluralCategory>(capi::ICU4XPluralRules_select(this->inner.get(), capi::ICU4XPluralOperands{ .i = diplomat_wrapped_struct_op.i, .v = diplomat_wrapped_struct_op.v, .w = diplomat_wrapped_struct_op.w, .f = diplomat_wrapped_struct_op.f, .t = diplomat_wrapped_struct_op.t, .c = diplomat_wrapped_struct_op.c }));
+inline ICU4XPluralCategory ICU4XPluralRules::category_for(const ICU4XPluralOperands& op) const {
+  return static_cast<ICU4XPluralCategory>(capi::ICU4XPluralRules_category_for(this->inner.get(), op.AsFFI()));
 }
 inline ICU4XPluralCategories ICU4XPluralRules::categories() const {
   capi::ICU4XPluralCategories diplomat_raw_struct_out_value = capi::ICU4XPluralRules_categories(this->inner.get());

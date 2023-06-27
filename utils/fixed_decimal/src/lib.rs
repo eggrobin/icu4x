@@ -13,9 +13,7 @@
 //! ```
 //! use fixed_decimal::FixedDecimal;
 //!
-//! let dec = FixedDecimal::from(250)
-//!     .multiplied_pow10(-2)
-//!     .expect("Bounds are small");
+//! let dec = FixedDecimal::from(250).multiplied_pow10(-2);
 //! assert_eq!("2.50", format!("{}", dec));
 //!
 //! #[derive(Debug, PartialEq)]
@@ -46,36 +44,50 @@
         clippy::indexing_slicing,
         clippy::unwrap_used,
         clippy::expect_used,
-        clippy::panic
+        clippy::panic,
+        clippy::exhaustive_structs,
+        clippy::exhaustive_enums,
+        missing_debug_implementations,
     )
 )]
 
-pub mod decimal;
-pub mod signum;
+mod compact;
+mod decimal;
+mod integer;
+mod ops;
+mod scientific;
 mod uint_iterator;
 
 #[cfg(feature = "ryu")]
 pub use decimal::DoublePrecision;
 
+pub use compact::CompactDecimal;
 pub use decimal::FixedDecimal;
-pub use decimal::RoundingMode;
+pub use decimal::Sign;
+pub use decimal::SignDisplay;
 use displaydoc::Display;
-pub use signum::Signum;
+pub use integer::FixedInteger;
+pub use scientific::ScientificDecimal;
 
 #[derive(Display, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Error {
     /// The magnitude or number of digits exceeds the limit of the FixedDecimal. The highest
     /// magnitude of the most significant digit is core::i16::MAX, and the lowest magnitude of the
     /// least significant digit is core::i16::MIN.
     ///
+    /// This error is also returned when constructing a FixedInteger from a FixedDecimal with a
+    /// fractional part.
+    ///
     /// # Examples
     ///
     /// ```
-    /// use fixed_decimal::FixedDecimal;
     /// use fixed_decimal::Error;
+    /// use fixed_decimal::FixedDecimal;
     ///
     /// let mut dec1 = FixedDecimal::from(123);
-    /// assert_eq!(Error::Limit, dec1.multiply_pow10(core::i16::MAX).unwrap_err());
+    /// dec1.multiply_pow10(core::i16::MAX);
+    /// assert!(dec1.is_zero());
     /// ```
     #[displaydoc("Magnitude or number of digits exceeded")]
     Limit,

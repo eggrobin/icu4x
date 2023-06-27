@@ -10,7 +10,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
 use serde::de::{self, Deserialize, Deserializer, SeqAccess, Visitor};
-#[cfg(feature = "serde_serialize")]
+#[cfg(feature = "serde")]
 use serde::ser::{Serialize, SerializeSeq, Serializer};
 
 struct ZeroVecVisitor<T> {
@@ -54,11 +54,11 @@ where
         while let Some(value) = seq.next_element::<T>()? {
             vec.push(T::to_unaligned(value));
         }
-        Ok(ZeroVec::Owned(vec))
+        Ok(ZeroVec::new_owned(vec))
     }
 }
 
-/// This impl can be made available by enabling the optional `serde` feature of the `zerovec` crate
+/// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
 impl<'de, 'a, T> Deserialize<'de> for ZeroVec<'a, T>
 where
     T: 'de + Deserialize<'de> + AsULE,
@@ -77,8 +77,7 @@ where
     }
 }
 
-/// This impl can be made available by enabling the optional `serde_serialize` feature of the `zerovec` crate
-#[cfg(feature = "serde_serialize")]
+/// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
 impl<T> Serialize for ZeroVec<'_, T>
 where
     T: Serialize + AsULE,
@@ -99,7 +98,7 @@ where
     }
 }
 
-/// This impl can be made available by enabling the optional `serde` feature of the `zerovec` crate
+/// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
 impl<'de, T> Deserialize<'de> for Box<ZeroSlice<T>>
 where
     T: Deserialize<'de> + AsULE + 'static,
@@ -109,13 +108,40 @@ where
         D: Deserializer<'de>,
     {
         let mut zv = ZeroVec::<T>::deserialize(deserializer)?;
-        let vec = mem::take(zv.to_mut());
+        let vec = zv.with_mut(mem::take);
         Ok(ZeroSlice::from_boxed_slice(vec.into_boxed_slice()))
     }
 }
 
-/// This impl can be made available by enabling the optional `serde_serialize` feature of the `zerovec` crate
-#[cfg(feature = "serde_serialize")]
+/// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
+impl<'de, 'a, T> Deserialize<'de> for &'a ZeroSlice<T>
+where
+    T: Deserialize<'de> + AsULE + 'static,
+    'de: 'a,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            Err(de::Error::custom(
+                "&ZeroSlice cannot be deserialized from human-readable formats",
+            ))
+        } else {
+            let deserialized: ZeroVec<'a, T> = ZeroVec::deserialize(deserializer)?;
+            let borrowed = if let Some(b) = deserialized.as_maybe_borrowed() {
+                b
+            } else {
+                return Err(de::Error::custom(
+                    "&ZeroSlice can only deserialize in zero-copy ways",
+                ));
+            };
+            Ok(borrowed)
+        }
+    }
+}
+
+/// This impl requires enabling the optional `serde` Cargo feature of the `zerovec` crate
 impl<T> Serialize for ZeroSlice<T>
 where
     T: Serialize + AsULE,
@@ -155,7 +181,7 @@ mod test {
         let zerovec_new: ZeroVec<u32> =
             serde_json::from_str(&json_str).expect("deserialize from buffer to ZeroVec");
         assert_eq!(zerovec_orig, zerovec_new);
-        assert!(matches!(zerovec_new, ZeroVec::Owned(_)));
+        assert!(zerovec_new.is_owned());
     }
 
     #[test]
@@ -168,18 +194,20 @@ mod test {
         let zerovec_new: ZeroVec<u32> =
             bincode::deserialize(&bincode_buf).expect("deserialize from buffer to ZeroVec");
         assert_eq!(zerovec_orig, zerovec_new);
-        assert!(matches!(zerovec_new, ZeroVec::Borrowed(_)));
+
+        assert!(!zerovec_new.is_owned());
     }
 
     #[test]
     fn test_chars_valid() {
         // 1-byte, 2-byte, 3-byte, and 4-byte character in UTF-8 (not as relevant in UTF-32)
-        let zerovec_orig = ZeroVec::from_slice_or_alloc(&['w', 'ω', '文', '𑄃']);
+        let zerovec_orig = ZeroVec::alloc_from_slice(&['w', 'ω', '文', '𑄃']);
         let bincode_buf = bincode::serialize(&zerovec_orig).expect("serialize");
         let zerovec_new: ZeroVec<char> =
             bincode::deserialize(&bincode_buf).expect("deserialize from buffer to ZeroVec");
         assert_eq!(zerovec_orig, zerovec_new);
-        assert!(matches!(zerovec_new, ZeroVec::Borrowed(_)));
+
+        assert!(!zerovec_new.is_owned());
     }
 
     #[test]

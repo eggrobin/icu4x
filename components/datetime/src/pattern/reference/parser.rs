@@ -19,6 +19,7 @@ enum Segment {
     Literal { literal: String, quoted: bool },
 }
 
+#[derive(Debug)]
 pub struct Parser<'p> {
     source: &'p str,
     state: Segment,
@@ -103,8 +104,7 @@ impl<'p> Parser<'p> {
                 (Segment::Literal { ref mut quoted, .. }, false) => {
                     *quoted = !*quoted;
                 }
-                #[allow(clippy::panic)] // TODO(#1668) Clippy exceptions need docs or fixing.
-                _ => panic!(),
+                _ => unreachable!("Generic pattern has no symbols."),
             }
             Ok(true)
         } else if let Segment::Literal {
@@ -128,9 +128,7 @@ impl<'p> Parser<'p> {
                 return Err(PatternError::UnclosedLiteral);
             }
             Segment::Literal { literal, .. } => {
-                for ch in literal.chars() {
-                    result.push(ch.into());
-                }
+                result.extend(literal.chars().map(PatternItem::from));
             }
         }
         Ok(())
@@ -146,13 +144,10 @@ impl<'p> Parser<'p> {
             }
             Segment::Literal { literal, .. } => {
                 if !literal.is_empty() {
-                    for ch in literal.chars() {
-                        result.push(ch.into());
-                    }
+                    result.extend(literal.chars().map(GenericPatternItem::from))
                 }
             }
-            #[allow(clippy::panic)] // TODO(#1668) Clippy exceptions need docs or fixing.
-            _ => panic!(),
+            _ => unreachable!("Generic pattern has no symbols."),
         }
         Ok(())
     }
@@ -211,10 +206,11 @@ impl<'p> Parser<'p> {
                     Self::collect_generic_segment(self.state, &mut result)?;
 
                     let ch = chars.next().ok_or(PatternError::UnclosedPlaceholder)?;
-                    let idx: u32 = ch
+                    let idx = ch
                         .to_digit(10)
-                        .ok_or(PatternError::UnknownSubstitution(ch))?;
-                    result.push(GenericPatternItem::Placeholder(idx as u8));
+                        .ok_or(PatternError::UnknownSubstitution(ch))?
+                        as u8;
+                    result.push(GenericPatternItem::Placeholder(idx));
                     let ch = chars.next().ok_or(PatternError::UnclosedPlaceholder)?;
                     if ch != '}' {
                         return Err(PatternError::UnclosedPlaceholder);

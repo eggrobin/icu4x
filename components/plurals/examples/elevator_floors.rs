@@ -19,7 +19,7 @@ fn print(_input: &str, _value: Option<usize>) {
     if let Some(value) = _value {
         println!("{}", _input.replace("{}", &value.to_string()));
     } else {
-        println!("{}", _input);
+        println!("{_input}");
     }
 }
 
@@ -27,15 +27,14 @@ fn print(_input: &str, _value: Option<usize>) {
 fn main(_argc: isize, _argv: *const *const u8) -> isize {
     icu_benchmark_macros::main_setup!();
 
-    let provider = icu_testdata::get_static_provider();
-
     {
         print("\n====== Elevator Floor (en) example ============", None);
-        let pr = PluralRules::try_new_ordinal(locale!("en"), &provider)
-            .expect("Failed to create a PluralRules instance.");
+        let pr =
+            PluralRules::try_new_ordinal_unstable(&icu_testdata::unstable(), &locale!("en").into())
+                .expect("Failed to create a PluralRules instance.");
 
         for value in VALUES {
-            match pr.select(*value) {
+            match pr.category_for(*value) {
                 PluralCategory::One => print("You are on the {}st floor.", Some(*value)),
                 PluralCategory::Two => print("You are on the {}nd floor.", Some(*value)),
                 PluralCategory::Few => print("You are on the {}rd floor.", Some(*value)),

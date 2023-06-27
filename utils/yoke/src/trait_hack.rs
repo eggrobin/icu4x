@@ -56,7 +56,7 @@
 //! where
 //!     M: MiniDataMarker
 //! {
-//!     fn mini_load_payload(&self) -> MiniDataPayload<M>;
+//!     fn mini_load_data(&self) -> MiniDataPayload<M>;
 //! }
 //!
 //! struct MiniStructProvider<M>
@@ -71,7 +71,7 @@
 //!     M: MiniDataMarker,
 //!     for<'a> <M::Yokeable as Yokeable<'a>>::Output: Clone,
 //! {
-//!     fn mini_load_payload(&self) -> MiniDataPayload<M> {
+//!     fn mini_load_data(&self) -> MiniDataPayload<M> {
 //!         self.payload.clone()
 //!     }
 //! }
@@ -115,10 +115,10 @@
 //!
 //! // Broken:
 //! // "method cannot be called on `MiniStructProvider<_>` due to unsatisfied trait bounds"
-//! let payload: MiniDataPayload<SimpleStruct> = provider.mini_load_payload();
+//! let payload: MiniDataPayload<SimpleStruct> = provider.mini_load_data();
 //!
 //! // Working:
-//! let payload = MiniDataProvider::<SimpleStruct>::mini_load_payload(&provider);
+//! let payload = MiniDataProvider::<SimpleStruct>::mini_load_data(&provider);
 //!
 //! assert_eq!(payload.yoke.get().0, 42);
 //! ```
@@ -164,7 +164,10 @@
 //! }
 //!
 //! // The trait needs to be defined on references:
-//! impl<'a, T> MyTrait for &'a T where T: MyTrait {
+//! impl<'a, T> MyTrait for &'a T
+//! where
+//!     T: MyTrait,
+//! {
 //!     fn demo(&self) -> u32 {
 //!         self.demo()
 //!     }
@@ -189,10 +192,10 @@
 //! Example for using [`YokeTraitHack`]:
 //!
 //! ```
+//! use std::rc::Rc;
+//! use yoke::trait_hack::YokeTraitHack;
 //! use yoke::Yoke;
 //! use yoke::Yokeable;
-//! use yoke::trait_hack::YokeTraitHack;
-//! use std::rc::Rc;
 //!
 //! // Example trait and struct for illustration purposes:
 //! trait MyTrait {
@@ -229,7 +232,10 @@
 //! }
 //!
 //! // The trait needs to be defined on YokeTraitHack:
-//! impl<'a, T> MyTrait for YokeTraitHack<T> where T: MyTrait {
+//! impl<'a, T> MyTrait for YokeTraitHack<T>
+//! where
+//!     T: MyTrait,
+//! {
 //!     fn demo(data: u32) -> Self {
 //!         YokeTraitHack(T::demo(data))
 //!     }
@@ -242,7 +248,7 @@
 //! {
 //!     fn demo(data: u32) -> Self {
 //!         let rc_u32: Rc<u32> = Rc::new(data);
-//!         Yoke::attach_to_cart_badly(rc_u32, |u| {
+//!         Yoke::attach_to_cart(rc_u32, |u| {
 //!             YokeTraitHack::<<Y as Yokeable>::Output>::demo(*u).0
 //!         })
 //!     }
@@ -267,8 +273,8 @@ use core::mem;
 /// Using `YokeTraitHack` as a type bound in a function comparing two `Yoke`s:
 ///
 /// ```
-/// use yoke::*;
 /// use yoke::trait_hack::YokeTraitHack;
+/// use yoke::*;
 ///
 /// fn compare_yokes<Y, C1, C2>(y1: Yoke<Y, C1>, y2: Yoke<Y, C2>) -> bool
 /// where
@@ -279,7 +285,8 @@ use core::mem;
 /// }
 /// ```
 #[repr(transparent)]
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[allow(clippy::exhaustive_structs)] // newtype
 pub struct YokeTraitHack<T>(pub T);
 
 impl<'a, T> YokeTraitHack<&'a T> {

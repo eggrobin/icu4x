@@ -2,7 +2,7 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-//! The functions in this module return a [`UnicodeSet`] containing
+//! The functions in this module return a [`CodePointSetData`] containing
 //! the set of characters with a particular Unicode property.
 //!
 //! The descriptions of most properties are taken from [`TR44`], the documentation for the
@@ -10,7 +10,7 @@
 //! documentation for Unicode regular expressions. In particular, Annex C of this document
 //! defines properties for POSIX compatibility.
 //!
-//! [`UnicodeSet`]: icu_uniset::UnicodeSet
+//! [`CodePointSetData`]: crate::sets::CodePointSetData
 //! [`TR44`]: https://www.unicode.org/reports/tr44
 //! [`TR18`]: https://www.unicode.org/reports/tr18
 
@@ -18,53 +18,336 @@ use crate::error::PropertiesError;
 use crate::provider::*;
 use crate::*;
 use core::iter::FromIterator;
+use core::ops::RangeInclusive;
+use icu_collections::codepointinvlist::CodePointInversionList;
+use icu_collections::codepointinvliststringlist::CodePointInversionListAndStringList;
 use icu_provider::prelude::*;
-use icu_uniset::UnicodeSet;
 
-/// TODO(#1239): Finalize this API.
-pub type UnisetResult = Result<DataPayload<UnicodePropertyV1Marker>, PropertiesError>;
+//
+// CodePointSet* structs, impls, & macros
+// (a set with only code points)
+//
 
-// helper fn
-fn get_uniset<D>(provider: &D, key: ResourceKey) -> UnisetResult
+/// A wrapper around code point set data. It is returned by APIs that return Unicode
+/// property data in a set-like form, ex: a set of code points sharing the same
+/// value for a Unicode property. Access its data via the borrowed version,
+/// [`CodePointSetDataBorrowed`].
+#[derive(Debug)]
+pub struct CodePointSetData {
+    data: DataPayload<ErasedSetlikeMarker>,
+}
+
+/// Private marker type for CodePointSetData
+/// to work for all set properties at once
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct ErasedSetlikeMarker;
+impl DataMarker for ErasedSetlikeMarker {
+    type Yokeable = PropertyCodePointSetV1<'static>;
+}
+
+impl CodePointSetData {
+    /// Construct a borrowed version of this type that can be queried.
+    ///
+    /// This owned version if returned by functions that use a runtime data provider.
+    #[inline]
+    pub fn as_borrowed(&self) -> CodePointSetDataBorrowed<'_> {
+        CodePointSetDataBorrowed {
+            set: self.data.get(),
+        }
+    }
+
+    /// Construct a new one from loaded data
+    ///
+    /// Typically it is preferable to use getters like [`load_ascii_hex_digit()`] instead
+    pub fn from_data<M>(data: DataPayload<M>) -> Self
+    where
+        M: DataMarker<Yokeable = PropertyCodePointSetV1<'static>>,
+    {
+        Self { data: data.cast() }
+    }
+
+    /// Construct a new owned [`CodePointInversionList`]
+    pub fn from_code_point_inversion_list(set: CodePointInversionList<'static>) -> Self {
+        let set = PropertyCodePointSetV1::from_code_point_inversion_list(set);
+        CodePointSetData::from_data(DataPayload::<ErasedSetlikeMarker>::from_owned(set))
+    }
+
+    /// Convert this type to a [`CodePointInversionList`] as a borrowed value.
+    ///
+    /// The data backing this is extensible and supports multiple implementations.
+    /// Currently it is always [`CodePointInversionList`]; however in the future more backends may be
+    /// added, and users may select which at data generation time.
+    ///
+    /// This method returns an `Option` in order to return `None` when the backing data provider
+    /// cannot return a [`CodePointInversionList`], or cannot do so within the expected constant time
+    /// constraint.
+    pub fn as_code_point_inversion_list(&self) -> Option<&CodePointInversionList<'_>> {
+        self.data.get().as_code_point_inversion_list()
+    }
+
+    /// Convert this type to a [`CodePointInversionList`], borrowing if possible,
+    /// otherwise allocating a new [`CodePointInversionList`].
+    ///
+    /// The data backing this is extensible and supports multiple implementations.
+    /// Currently it is always [`CodePointInversionList`]; however in the future more backends may be
+    /// added, and users may select which at data generation time.
+    ///
+    /// The performance of the conversion to this specific return type will vary
+    /// depending on the data structure that is backing `self`.
+    pub fn to_code_point_inversion_list(&self) -> CodePointInversionList<'_> {
+        self.data.get().to_code_point_inversion_list()
+    }
+}
+
+/// A borrowed wrapper around code point set data, returned by
+/// [`CodePointSetData::as_borrowed()`]. More efficient to query.
+#[derive(Clone, Copy, Debug)]
+pub struct CodePointSetDataBorrowed<'a> {
+    set: &'a PropertyCodePointSetV1<'a>,
+}
+
+impl<'a> CodePointSetDataBorrowed<'a> {
+    /// Check if the set contains a character
+    ///
+    /// ```rust
+    /// use icu_properties::sets;
+    ///
+    /// let alphabetic = sets::alphabetic();
+    ///
+    /// assert!(!alphabetic.contains('3'));
+    /// assert!(!alphabetic.contains('੩'));  // U+0A69 GURMUKHI DIGIT THREE
+    /// assert!(alphabetic.contains('A'));
+    /// assert!(alphabetic.contains('Ä'));  // U+00C4 LATIN CAPITAL LETTER A WITH DIAERESIS
+    /// ```
+    #[inline]
+    pub fn contains(self, ch: char) -> bool {
+        self.set.contains(ch)
+    }
+
+    /// Check if the set contains a character as a UTF32 code unit
+    ///
+    /// ```rust
+    /// use icu_properties::sets;
+    ///
+    /// let alphabetic = sets::alphabetic();
+    ///
+    /// assert!(!alphabetic.contains32(0x0A69));  // U+0A69 GURMUKHI DIGIT THREE
+    /// assert!(alphabetic.contains32(0x00C4));  // U+00C4 LATIN CAPITAL LETTER A WITH DIAERESIS
+    /// ```
+    #[inline]
+    pub fn contains32(self, ch: u32) -> bool {
+        self.set.contains32(ch)
+    }
+
+    // Yields an [`Iterator`] returning the ranges of the code points that are
+    /// included in the [`CodePointSetData`]
+    ///
+    /// Ranges are returned as [`RangeInclusive`], which is inclusive of its
+    /// `end` bound value. An end-inclusive behavior matches the ICU4C/J
+    /// behavior of ranges, ex: `UnicodeSet::contains(UChar32 start, UChar32 end)`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use icu_properties::sets;
+    ///
+    /// let alphabetic = sets::alphabetic();
+    /// let mut ranges = alphabetic.iter_ranges();
+    ///
+    /// assert_eq!(Some(0x0041..=0x005A), ranges.next()); // 'A'..'Z'
+    /// assert_eq!(Some(0x0061..=0x007A), ranges.next()); // 'a'..'z'
+    /// ```
+    #[inline]
+    pub fn iter_ranges(self) -> impl Iterator<Item = RangeInclusive<u32>> + 'a {
+        self.set.iter_ranges()
+    }
+
+    // Yields an [`Iterator`] returning the ranges of the code points that are
+    /// *not* included in the [`CodePointSetData`]
+    ///
+    /// Ranges are returned as [`RangeInclusive`], which is inclusive of its
+    /// `end` bound value. An end-inclusive behavior matches the ICU4C/J
+    /// behavior of ranges, ex: `UnicodeSet::contains(UChar32 start, UChar32 end)`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use icu_properties::sets;
+    ///
+    /// let alphabetic = sets::alphabetic();
+    /// let mut ranges = alphabetic.iter_ranges();
+    ///
+    /// assert_eq!(Some(0x0041..=0x005A), ranges.next()); // 'A'..'Z'
+    /// assert_eq!(Some(0x0061..=0x007A), ranges.next()); // 'a'..'z'
+    /// ```
+    #[inline]
+    pub fn iter_ranges_complemented(self) -> impl Iterator<Item = RangeInclusive<u32>> + 'a {
+        self.set.iter_ranges_complemented()
+    }
+}
+
+//
+// UnicodeSet* structs, impls, & macros
+// (a set with code points + strings)
+//
+
+/// A wrapper around `UnicodeSet` data (characters and strings)
+#[derive(Debug)]
+pub struct UnicodeSetData {
+    data: DataPayload<ErasedUnicodeSetlikeMarker>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct ErasedUnicodeSetlikeMarker;
+impl DataMarker for ErasedUnicodeSetlikeMarker {
+    type Yokeable = PropertyUnicodeSetV1<'static>;
+}
+
+impl UnicodeSetData {
+    /// Construct a borrowed version of this type that can be queried.
+    ///
+    /// This avoids a potential small underlying cost per API call (ex: `contains()`) by consolidating it
+    /// up front.
+    #[inline]
+    pub fn as_borrowed(&self) -> UnicodeSetDataBorrowed<'_> {
+        UnicodeSetDataBorrowed {
+            set: self.data.get(),
+        }
+    }
+
+    /// Construct a new one from loaded data
+    ///
+    /// Typically it is preferable to use getters instead
+    pub fn from_data<M>(data: DataPayload<M>) -> Self
+    where
+        M: DataMarker<Yokeable = PropertyUnicodeSetV1<'static>>,
+    {
+        Self { data: data.cast() }
+    }
+
+    /// Construct a new owned [`CodePointInversionListAndStringList`]
+    pub fn from_code_point_inversion_list_string_list(
+        set: CodePointInversionListAndStringList<'static>,
+    ) -> Self {
+        let set = PropertyUnicodeSetV1::from_code_point_inversion_list_string_list(set);
+        UnicodeSetData::from_data(DataPayload::<ErasedUnicodeSetlikeMarker>::from_owned(set))
+    }
+
+    /// Convert this type to a [`CodePointInversionListAndStringList`] as a borrowed value.
+    ///
+    /// The data backing this is extensible and supports multiple implementations.
+    /// Currently it is always [`CodePointInversionListAndStringList`]; however in the future more backends may be
+    /// added, and users may select which at data generation time.
+    ///
+    /// This method returns an `Option` in order to return `None` when the backing data provider
+    /// cannot return a [`CodePointInversionListAndStringList`], or cannot do so within the expected constant time
+    /// constraint.
+    pub fn as_code_point_inversion_list_string_list(
+        &self,
+    ) -> Option<&CodePointInversionListAndStringList<'_>> {
+        self.data.get().as_code_point_inversion_list_string_list()
+    }
+
+    /// Convert this type to a [`CodePointInversionListAndStringList`], borrowing if possible,
+    /// otherwise allocating a new [`CodePointInversionListAndStringList`].
+    ///
+    /// The data backing this is extensible and supports multiple implementations.
+    /// Currently it is always [`CodePointInversionListAndStringList`]; however in the future more backends may be
+    /// added, and users may select which at data generation time.
+    ///
+    /// The performance of the conversion to this specific return type will vary
+    /// depending on the data structure that is backing `self`.
+    pub fn to_code_point_inversion_list_string_list(
+        &self,
+    ) -> CodePointInversionListAndStringList<'_> {
+        self.data.get().to_code_point_inversion_list_string_list()
+    }
+}
+
+/// A borrowed wrapper around code point set data, returned by
+/// [`UnicodeSetData::as_borrowed()`]. More efficient to query.
+#[derive(Clone, Copy, Debug)]
+pub struct UnicodeSetDataBorrowed<'a> {
+    set: &'a PropertyUnicodeSetV1<'a>,
+}
+
+impl<'a> UnicodeSetDataBorrowed<'a> {
+    /// Check if the set contains the string. Strings consisting of one character
+    /// are treated as a character/code point.
+    ///
+    /// This matches ICU behavior for ICU's `UnicodeSet`.
+    #[inline]
+    pub fn contains(self, s: &str) -> bool {
+        self.set.contains(s)
+    }
+
+    /// Check if the set contains a character as a UTF32 code unit
+    #[inline]
+    pub fn contains32(&self, cp: u32) -> bool {
+        self.set.contains32(cp)
+    }
+
+    /// Check if the set contains the code point corresponding to the Rust character.
+    #[inline]
+    pub fn contains_char(&self, ch: char) -> bool {
+        self.set.contains_char(ch)
+    }
+}
+
+pub(crate) fn load_set_data<M, P>(provider: &P) -> Result<CodePointSetData, PropertiesError>
 where
-    D: DynProvider<UnicodePropertyV1Marker> + ?Sized,
+    M: KeyedDataMarker<Yokeable = PropertyCodePointSetV1<'static>>,
+    P: DataProvider<M> + ?Sized,
 {
-    let resp: DataResponse<UnicodePropertyV1Marker> =
-        provider.load_payload(key, &Default::default())?;
-
-    let property_payload: DataPayload<UnicodePropertyV1Marker> = resp.take_payload()?;
-    Ok(property_payload)
+    Ok(provider
+        .load(Default::default())
+        .and_then(DataResponse::take_payload)
+        .map(CodePointSetData::from_data)?)
 }
 
 //
 // Binary property getter fns
+// (data as code point sets)
 //
 
-macro_rules! make_set_property {
+macro_rules! make_code_point_set_property {
     (
         // currently unused
-        property: $prop_name:expr;
+        property: $property:expr;
         // currently unused
         marker: $marker_name:ident;
-        key: $key_name:expr;
+        keyed_data_marker: $keyed_data_marker:ty;
         func:
-        $(#[$attr:meta])*
-        pub fn $funcname:ident();
+        $(#[$doc:meta])+
+        $cvis:vis const fn $constname:ident() => $singleton_name:ident;
+        $vis:vis fn $funcname:ident();
     ) => {
-        $(#[$attr])*
-        pub fn $funcname<D>(provider: &D) -> UnisetResult
-        where
-            D: DynProvider<UnicodePropertyV1Marker> + ?Sized,
-        {
-            get_uniset(provider, $key_name)
+        #[doc = concat!("[`", stringify!($constname), "()`] with a runtime data provider argument.")]
+        ///
+        /// Note that this will return an owned version of the data. Functionality is available on
+        /// the borrowed version, accessible through `.as_borrowed()`.
+        $vis fn $funcname(
+            provider: &(impl DataProvider<$keyed_data_marker> + ?Sized)
+        ) -> Result<CodePointSetData, PropertiesError> {
+            load_set_data(provider)
+        }
+
+        $(#[$doc])*
+        ///
+        /// ✨ **Enabled with the `"data"` feature.**
+        #[cfg(feature = "data")]
+        $cvis const fn $constname() -> CodePointSetDataBorrowed<'static> {
+            CodePointSetDataBorrowed {
+                set: crate::provider::Baked::$singleton_name,
+            }
         }
     }
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "ASCII_Hex_Digit";
     marker: AsciiHexDigitProperty;
-    key: crate::provider::key::ASCII_HEX_DIGIT_V1;
+    keyed_data_marker: AsciiHexDigitV1Marker;
     func:
     /// ASCII characters commonly used for the representation of hexadecimal numbers
     ///
@@ -73,36 +356,33 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_ascii_hex_digit(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let ascii_hex_digit = &data_struct.inv_list;
+    /// let ascii_hex_digit = sets::ascii_hex_digit();
     ///
     /// assert!(ascii_hex_digit.contains('3'));
     /// assert!(!ascii_hex_digit.contains('੩'));  // U+0A69 GURMUKHI DIGIT THREE
     /// assert!(ascii_hex_digit.contains('A'));
     /// assert!(!ascii_hex_digit.contains('Ä'));  // U+00C4 LATIN CAPITAL LETTER A WITH DIAERESIS
     /// ```
-    pub fn get_ascii_hex_digit();
+    pub const fn ascii_hex_digit() => SINGLETON_PROPS_AHEX_V1;
+    pub fn load_ascii_hex_digit();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Alnum";
     marker: AlnumProperty;
-    key: crate::provider::key::ALNUM_V1;
+    keyed_data_marker: AlnumV1Marker;
     func:
     /// Characters with the Alphabetic or Decimal_Number property
     /// This is defined for POSIX compatibility.
 
-    pub fn get_alnum();
+    pub const fn alnum() => SINGLETON_PROPS_ALNUM_V1;
+    pub fn load_alnum();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Alphabetic";
     marker: AlphabeticProperty;
-    key: crate::provider::key::ALPHABETIC_V1;
+    keyed_data_marker: AlphabeticV1Marker;
     func:
     /// Alphabetic characters
     ///
@@ -111,12 +391,7 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_alphabetic(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let alphabetic = &data_struct.inv_list;
+    /// let alphabetic = sets::alphabetic();
     ///
     /// assert!(!alphabetic.contains('3'));
     /// assert!(!alphabetic.contains('੩'));  // U+0A69 GURMUKHI DIGIT THREE
@@ -124,13 +399,14 @@ make_set_property! {
     /// assert!(alphabetic.contains('Ä'));  // U+00C4 LATIN CAPITAL LETTER A WITH DIAERESIS
     /// ```
 
-    pub fn get_alphabetic();
+    pub const fn alphabetic() => SINGLETON_PROPS_ALPHA_V1;
+    pub fn load_alphabetic();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Bidi_Control";
     marker: BidiControlProperty;
-    key: crate::provider::key::BIDI_CONTROL_V1;
+    keyed_data_marker: BidiControlV1Marker;
     func:
     /// Format control characters which have specific functions in the Unicode Bidirectional
     /// Algorithm
@@ -140,24 +416,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_bidi_control(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let bidi_control = &data_struct.inv_list;
+    /// let bidi_control = sets::bidi_control();
     ///
-    /// assert!(bidi_control.contains_u32(0x200F));  // RIGHT-TO-LEFT MARK
+    /// assert!(bidi_control.contains32(0x200F));  // RIGHT-TO-LEFT MARK
     /// assert!(!bidi_control.contains('ش'));  // U+0634 ARABIC LETTER SHEEN
     /// ```
 
-    pub fn get_bidi_control();
+    pub const fn bidi_control() => SINGLETON_PROPS_BIDI_C_V1;
+    pub fn load_bidi_control();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Bidi_Mirrored";
     marker: BidiMirroredProperty;
-    key: crate::provider::key::BIDI_MIRRORED_V1;
+    keyed_data_marker: BidiMirroredV1Marker;
     func:
     /// Characters that are mirrored in bidirectional text
     ///
@@ -166,12 +438,7 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_bidi_mirrored(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let bidi_mirrored = &data_struct.inv_list;
+    /// let bidi_mirrored = sets::bidi_mirrored();
     ///
     /// assert!(bidi_mirrored.contains('['));
     /// assert!(bidi_mirrored.contains(']'));
@@ -179,23 +446,25 @@ make_set_property! {
     /// assert!(!bidi_mirrored.contains('ཉ'));  // U+0F49 TIBETAN LETTER NYA
     /// ```
 
-    pub fn get_bidi_mirrored();
+    pub const fn bidi_mirrored() => SINGLETON_PROPS_BIDI_M_V1;
+    pub fn load_bidi_mirrored();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Blank";
     marker: BlankProperty;
-    key: crate::provider::key::BLANK_V1;
+    keyed_data_marker: BlankV1Marker;
     func:
     /// Horizontal whitespace characters
 
-    pub fn get_blank();
+    pub const fn blank() => SINGLETON_PROPS_BLANK_V1;
+    pub fn load_blank();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Cased";
     marker: CasedProperty;
-    key: crate::provider::key::CASED_V1;
+    keyed_data_marker: CasedV1Marker;
     func:
     /// Uppercase, lowercase, and titlecase characters
     ///
@@ -204,24 +473,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_cased(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let cased = &data_struct.inv_list;
+    /// let cased = sets::cased();
     ///
     /// assert!(cased.contains('Ꙡ'));  // U+A660 CYRILLIC CAPITAL LETTER REVERSED TSE
     /// assert!(!cased.contains('ދ'));  // U+078B THAANA LETTER DHAALU
     /// ```
 
-    pub fn get_cased();
+    pub const fn cased() => SINGLETON_PROPS_CASED_V1;
+    pub fn load_cased();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Case_Ignorable";
     marker: CaseIgnorableProperty;
-    key: crate::provider::key::CASE_IGNORABLE_V1;
+    keyed_data_marker: CaseIgnorableV1Marker;
     func:
     /// Characters which are ignored for casing purposes
     ///
@@ -230,35 +495,32 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_case_ignorable(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let case_ignorable = &data_struct.inv_list;
+    /// let case_ignorable = sets::case_ignorable();
     ///
     /// assert!(case_ignorable.contains(':'));
     /// assert!(!case_ignorable.contains('λ'));  // U+03BB GREEK SMALL LETTER LAMDA
     /// ```
 
-    pub fn get_case_ignorable();
+    pub const fn case_ignorable() => SINGLETON_PROPS_CI_V1;
+    pub fn load_case_ignorable();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Full_Composition_Exclusion";
     marker: FullCompositionExclusionProperty;
-    key: crate::provider::key::FULL_COMPOSITION_EXCLUSION_V1;
+    keyed_data_marker: FullCompositionExclusionV1Marker;
     func:
     /// Characters that are excluded from composition
     /// See <https://unicode.org/Public/UNIDATA/CompositionExclusions.txt>
 
-    pub fn get_full_composition_exclusion();
+    pub const fn full_composition_exclusion() => SINGLETON_PROPS_COMP_EX_V1;
+    pub fn load_full_composition_exclusion();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Changes_When_Casefolded";
     marker: ChangesWhenCasefoldedProperty;
-    key: crate::provider::key::CHANGES_WHEN_CASEFOLDED_V1;
+    keyed_data_marker: ChangesWhenCasefoldedV1Marker;
     func:
     /// Characters whose normalized forms are not stable under case folding
     ///
@@ -267,34 +529,31 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_changes_when_casefolded(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let changes_when_casefolded = &data_struct.inv_list;
+    /// let changes_when_casefolded = sets::changes_when_casefolded();
     ///
     /// assert!(changes_when_casefolded.contains('ß'));  // U+00DF LATIN SMALL LETTER SHARP S
     /// assert!(!changes_when_casefolded.contains('ᜉ'));  // U+1709 TAGALOG LETTER PA
     /// ```
 
-    pub fn get_changes_when_casefolded();
+    pub const fn changes_when_casefolded() => SINGLETON_PROPS_CWCF_V1;
+    pub fn load_changes_when_casefolded();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Changes_When_Casemapped";
     marker: ChangesWhenCasemappedProperty;
-    key: crate::provider::key::CHANGES_WHEN_CASEMAPPED_V1;
+    keyed_data_marker: ChangesWhenCasemappedV1Marker;
     func:
     /// Characters which may change when they undergo case mapping
 
-    pub fn get_changes_when_casemapped();
+    pub const fn changes_when_casemapped() => SINGLETON_PROPS_CWCM_V1;
+    pub fn load_changes_when_casemapped();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Changes_When_NFKC_Casefolded";
     marker: ChangesWhenNfkcCasefoldedProperty;
-    key: crate::provider::key::CHANGES_WHEN_NFKC_CASEFOLDED_V1;
+    keyed_data_marker: ChangesWhenNfkcCasefoldedV1Marker;
     func:
     /// Characters which are not identical to their NFKC_Casefold mapping
     ///
@@ -303,24 +562,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_changes_when_nfkc_casefolded(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let changes_when_nfkc_casefolded = &data_struct.inv_list;
+    /// let changes_when_nfkc_casefolded = sets::changes_when_nfkc_casefolded();
     ///
     /// assert!(changes_when_nfkc_casefolded.contains('🄵'));  // U+1F135 SQUARED LATIN CAPITAL LETTER F
     /// assert!(!changes_when_nfkc_casefolded.contains('f'));
     /// ```
 
-    pub fn get_changes_when_nfkc_casefolded();
+    pub const fn changes_when_nfkc_casefolded() => SINGLETON_PROPS_CWKCF_V1;
+    pub fn load_changes_when_nfkc_casefolded();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Changes_When_Lowercased";
     marker: ChangesWhenLowercasedProperty;
-    key: crate::provider::key::CHANGES_WHEN_LOWERCASED_V1;
+    keyed_data_marker: ChangesWhenLowercasedV1Marker;
     func:
     /// Characters whose normalized forms are not stable under a toLowercase mapping
     ///
@@ -329,24 +584,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_changes_when_lowercased(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let changes_when_lowercased = &data_struct.inv_list;
+    /// let changes_when_lowercased = sets::changes_when_lowercased();
     ///
     /// assert!(changes_when_lowercased.contains('Ⴔ'));  // U+10B4 GEORGIAN CAPITAL LETTER PHAR
     /// assert!(!changes_when_lowercased.contains('ფ'));  // U+10E4 GEORGIAN LETTER PHAR
     /// ```
 
-    pub fn get_changes_when_lowercased();
+    pub const fn changes_when_lowercased() => SINGLETON_PROPS_CWL_V1;
+    pub fn load_changes_when_lowercased();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Changes_When_Titlecased";
     marker: ChangesWhenTitlecasedProperty;
-    key: crate::provider::key::CHANGES_WHEN_TITLECASED_V1;
+    keyed_data_marker: ChangesWhenTitlecasedV1Marker;
     func:
     /// Characters whose normalized forms are not stable under a toTitlecase mapping
     ///
@@ -355,24 +606,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_changes_when_titlecased(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let changes_when_titlecased = &data_struct.inv_list;
+    /// let changes_when_titlecased = sets::changes_when_titlecased();
     ///
     /// assert!(changes_when_titlecased.contains('æ'));  // U+00E6 LATIN SMALL LETTER AE
     /// assert!(!changes_when_titlecased.contains('Æ'));  // U+00E6 LATIN CAPITAL LETTER AE
     /// ```
 
-    pub fn get_changes_when_titlecased();
+    pub const fn changes_when_titlecased() => SINGLETON_PROPS_CWT_V1;
+    pub fn load_changes_when_titlecased();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Changes_When_Uppercased";
     marker: ChangesWhenUppercasedProperty;
-    key: crate::provider::key::CHANGES_WHEN_UPPERCASED_V1;
+    keyed_data_marker: ChangesWhenUppercasedV1Marker;
     func:
     /// Characters whose normalized forms are not stable under a toUppercase mapping
     ///
@@ -381,24 +628,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_changes_when_uppercased(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let changes_when_uppercased = &data_struct.inv_list;
+    /// let changes_when_uppercased = sets::changes_when_uppercased();
     ///
     /// assert!(changes_when_uppercased.contains('ւ'));  // U+0582 ARMENIAN SMALL LETTER YIWN
     /// assert!(!changes_when_uppercased.contains('Ւ'));  // U+0552 ARMENIAN CAPITAL LETTER YIWN
     /// ```
 
-    pub fn get_changes_when_uppercased();
+    pub const fn changes_when_uppercased() => SINGLETON_PROPS_CWU_V1;
+    pub fn load_changes_when_uppercased();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Dash";
     marker: DashProperty;
-    key: crate::provider::key::DASH_V1;
+    keyed_data_marker: DashV1Marker;
     func:
     /// Punctuation characters explicitly called out as dashes in the Unicode Standard, plus
     /// their compatibility equivalents
@@ -408,25 +651,21 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_dash(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let dash = &data_struct.inv_list;
+    /// let dash = sets::dash();
     ///
     /// assert!(dash.contains('⸺'));  // U+2E3A TWO-EM DASH
     /// assert!(dash.contains('-'));  // U+002D
     /// assert!(!dash.contains('='));  // U+003D
     /// ```
 
-    pub fn get_dash();
+    pub const fn dash() => SINGLETON_PROPS_DASH_V1;
+    pub fn load_dash();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Deprecated";
     marker: DeprecatedProperty;
-    key: crate::provider::key::DEPRECATED_V1;
+    keyed_data_marker: DeprecatedV1Marker;
     func:
     /// Deprecated characters. No characters will ever be removed from the standard, but the
     /// usage of deprecated characters is strongly discouraged.
@@ -436,24 +675,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_deprecated(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let deprecated = &data_struct.inv_list;
+    /// let deprecated = sets::deprecated();
     ///
     /// assert!(deprecated.contains('ឣ'));  // U+17A3 KHMER INDEPENDENT VOWEL QAQ
     /// assert!(!deprecated.contains('A'));
     /// ```
 
-    pub fn get_deprecated();
+    pub const fn deprecated() => SINGLETON_PROPS_DEP_V1;
+    pub fn load_deprecated();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Default_Ignorable_Code_Point";
     marker: DefaultIgnorableCodePointProperty;
-    key: crate::provider::key::DEFAULT_IGNORABLE_CODE_POINT_V1;
+    keyed_data_marker: DefaultIgnorableCodePointV1Marker;
     func:
     /// For programmatic determination of default ignorable code points.  New characters that
     /// should be ignored in rendering (unless explicitly supported) will be assigned in these
@@ -465,24 +700,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_default_ignorable_code_point(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let default_ignorable_code_point = &data_struct.inv_list;
+    /// let default_ignorable_code_point = sets::default_ignorable_code_point();
     ///
-    /// assert!(default_ignorable_code_point.contains_u32(0x180B));  // MONGOLIAN FREE VARIATION SELECTOR ONE
+    /// assert!(default_ignorable_code_point.contains32(0x180B));  // MONGOLIAN FREE VARIATION SELECTOR ONE
     /// assert!(!default_ignorable_code_point.contains('E'));
     /// ```
 
-    pub fn get_default_ignorable_code_point();
+    pub const fn default_ignorable_code_point() => SINGLETON_PROPS_DI_V1;
+    pub fn load_default_ignorable_code_point();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Diacritic";
     marker: DiacriticProperty;
-    key: crate::provider::key::DIACRITIC_V1;
+    keyed_data_marker: DiacriticV1Marker;
     func:
     /// Characters that linguistically modify the meaning of another character to which they apply
     ///
@@ -491,24 +722,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_diacritic(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let diacritic = &data_struct.inv_list;
+    /// let diacritic = sets::diacritic();
     ///
     /// assert!(diacritic.contains('\u{05B3}'));  // HEBREW POINT HATAF QAMATS
     /// assert!(!diacritic.contains('א'));  // U+05D0 HEBREW LETTER ALEF
     /// ```
 
-    pub fn get_diacritic();
+    pub const fn diacritic() => SINGLETON_PROPS_DIA_V1;
+    pub fn load_diacritic();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Emoji_Modifier_Base";
     marker: EmojiModifierBaseProperty;
-    key: crate::provider::key::EMOJI_MODIFIER_BASE_V1;
+    keyed_data_marker: EmojiModifierBaseV1Marker;
     func:
     /// Characters that can serve as a base for emoji modifiers
     ///
@@ -517,24 +744,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_emoji_modifier_base(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let emoji_modifier_base = &data_struct.inv_list;
+    /// let emoji_modifier_base = sets::emoji_modifier_base();
     ///
     /// assert!(emoji_modifier_base.contains('✊'));  // U+270A RAISED FIST
     /// assert!(!emoji_modifier_base.contains('⛰'));  // U+26F0 MOUNTAIN
     /// ```
 
-    pub fn get_emoji_modifier_base();
+    pub const fn emoji_modifier_base() => SINGLETON_PROPS_EBASE_V1;
+    pub fn load_emoji_modifier_base();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Emoji_Component";
     marker: EmojiComponentProperty;
-    key: crate::provider::key::EMOJI_COMPONENT_V1;
+    keyed_data_marker: EmojiComponentV1Marker;
     func:
     /// Characters used in emoji sequences that normally do not appear on emoji keyboards as
     /// separate choices, such as base characters for emoji keycaps
@@ -544,26 +767,22 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_emoji_component(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let emoji_component = &data_struct.inv_list;
+    /// let emoji_component = sets::emoji_component();
     ///
     /// assert!(emoji_component.contains('🇹'));  // U+1F1F9 REGIONAL INDICATOR SYMBOL LETTER T
-    /// assert!(emoji_component.contains_u32(0x20E3));  // COMBINING ENCLOSING KEYCAP
+    /// assert!(emoji_component.contains32(0x20E3));  // COMBINING ENCLOSING KEYCAP
     /// assert!(emoji_component.contains('7'));
     /// assert!(!emoji_component.contains('T'));
     /// ```
 
-    pub fn get_emoji_component();
+    pub const fn emoji_component() => SINGLETON_PROPS_ECOMP_V1;
+    pub fn load_emoji_component();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Emoji_Modifier";
     marker: EmojiModifierProperty;
-    key: crate::provider::key::EMOJI_MODIFIER_V1;
+    keyed_data_marker: EmojiModifierV1Marker;
     func:
     /// Characters that are emoji modifiers
     ///
@@ -572,24 +791,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_emoji_modifier(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let emoji_modifier = &data_struct.inv_list;
+    /// let emoji_modifier = sets::emoji_modifier();
     ///
-    /// assert!(emoji_modifier.contains_u32(0x1F3FD));  // EMOJI MODIFIER FITZPATRICK TYPE-4
-    /// assert!(!emoji_modifier.contains_u32(0x200C));  // ZERO WIDTH NON-JOINER
+    /// assert!(emoji_modifier.contains32(0x1F3FD));  // EMOJI MODIFIER FITZPATRICK TYPE-4
+    /// assert!(!emoji_modifier.contains32(0x200C));  // ZERO WIDTH NON-JOINER
     /// ```
 
-    pub fn get_emoji_modifier();
+    pub const fn emoji_modifier() => SINGLETON_PROPS_EMOD_V1;
+    pub fn load_emoji_modifier();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Emoji";
     marker: EmojiProperty;
-    key: crate::provider::key::EMOJI_V1;
+    keyed_data_marker: EmojiV1Marker;
     func:
     /// Characters that are emoji
     ///
@@ -598,24 +813,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_emoji(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let emoji = &data_struct.inv_list;
+    /// let emoji = sets::emoji();
     ///
     /// assert!(emoji.contains('🔥'));  // U+1F525 FIRE
     /// assert!(!emoji.contains('V'));
     /// ```
 
-    pub fn get_emoji();
+    pub const fn emoji() => SINGLETON_PROPS_EMOJI_V1;
+    pub fn load_emoji();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Emoji_Presentation";
     marker: EmojiPresentationProperty;
-    key: crate::provider::key::EMOJI_PRESENTATION_V1;
+    keyed_data_marker: EmojiPresentationV1Marker;
     func:
     /// Characters that have emoji presentation by default
     ///
@@ -624,24 +835,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_emoji_presentation(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let emoji_presentation = &data_struct.inv_list;
+    /// let emoji_presentation = sets::emoji_presentation();
     ///
     /// assert!(emoji_presentation.contains('🦬')); // U+1F9AC BISON
     /// assert!(!emoji_presentation.contains('♻'));  // U+267B BLACK UNIVERSAL RECYCLING SYMBOL
     /// ```
 
-    pub fn get_emoji_presentation();
+    pub const fn emoji_presentation() => SINGLETON_PROPS_EPRES_V1;
+    pub fn load_emoji_presentation();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Extender";
     marker: ExtenderProperty;
-    key: crate::provider::key::EXTENDER_V1;
+    keyed_data_marker: ExtenderV1Marker;
     func:
     /// Characters whose principal function is to extend the value of a preceding alphabetic
     /// character or to extend the shape of adjacent characters.
@@ -651,25 +858,21 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_extender(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let extender = &data_struct.inv_list;
+    /// let extender = sets::extender();
     ///
     /// assert!(extender.contains('ヾ'));  // U+30FE KATAKANA VOICED ITERATION MARK
     /// assert!(extender.contains('ー'));  // U+30FC KATAKANA-HIRAGANA PROLONGED SOUND MARK
     /// assert!(!extender.contains('・'));  // U+30FB KATAKANA MIDDLE DOT
     /// ```
 
-    pub fn get_extender();
+    pub const fn extender() => SINGLETON_PROPS_EXT_V1;
+    pub fn load_extender();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Extended_Pictographic";
     marker: ExtendedPictographicProperty;
-    key: crate::provider::key::EXTENDED_PICTOGRAPHIC_V1;
+    keyed_data_marker: ExtendedPictographicV1Marker;
     func:
     /// Pictographic symbols, as well as reserved ranges in blocks largely associated with
     /// emoji characters
@@ -679,35 +882,32 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_extended_pictographic(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let extended_pictographic = &data_struct.inv_list;
+    /// let extended_pictographic = sets::extended_pictographic();
     ///
     /// assert!(extended_pictographic.contains('🥳')); // U+1F973 FACE WITH PARTY HORN AND PARTY HAT
     /// assert!(!extended_pictographic.contains('🇪'));  // U+1F1EA REGIONAL INDICATOR SYMBOL LETTER E
     /// ```
 
-    pub fn get_extended_pictographic();
+    pub const fn extended_pictographic() => SINGLETON_PROPS_EXTPICT_V1;
+    pub fn load_extended_pictographic();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Graph";
     marker: GraphProperty;
-    key: crate::provider::key::GRAPH_V1;
+    keyed_data_marker: GraphV1Marker;
     func:
     /// Visible characters.
     /// This is defined for POSIX compatibility.
 
-    pub fn get_graph();
+    pub const fn graph() => SINGLETON_PROPS_GRAPH_V1;
+    pub fn load_graph();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Grapheme_Base";
     marker: GraphemeBaseProperty;
-    key: crate::provider::key::GRAPHEME_BASE_V1;
+    keyed_data_marker: GraphemeBaseV1Marker;
     func:
     /// Property used together with the definition of Standard Korean Syllable Block to define
     /// "Grapheme base". See D58 in Chapter 3, Conformance in the Unicode Standard.
@@ -717,25 +917,21 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_grapheme_base(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let grapheme_base = &data_struct.inv_list;
+    /// let grapheme_base = sets::grapheme_base();
     ///
     /// assert!(grapheme_base.contains('ക'));  // U+0D15 MALAYALAM LETTER KA
     /// assert!(grapheme_base.contains('\u{0D3F}'));  // U+0D3F MALAYALAM VOWEL SIGN I
     /// assert!(!grapheme_base.contains('\u{0D3E}'));  // U+0D3E MALAYALAM VOWEL SIGN AA
     /// ```
 
-    pub fn get_grapheme_base();
+    pub const fn grapheme_base() => SINGLETON_PROPS_GR_BASE_V1;
+    pub fn load_grapheme_base();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Grapheme_Extend";
     marker: GraphemeExtendProperty;
-    key: crate::provider::key::GRAPHEME_EXTEND_V1;
+    keyed_data_marker: GraphemeExtendV1Marker;
     func:
     /// Property used to define "Grapheme extender". See D59 in Chapter 3, Conformance in the
     /// Unicode Standard.
@@ -745,36 +941,33 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_grapheme_extend(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let grapheme_extend = &data_struct.inv_list;
+    /// let grapheme_extend = sets::grapheme_extend();
     ///
     /// assert!(!grapheme_extend.contains('ക'));  // U+0D15 MALAYALAM LETTER KA
     /// assert!(!grapheme_extend.contains('\u{0D3F}'));  // U+0D3F MALAYALAM VOWEL SIGN I
     /// assert!(grapheme_extend.contains('\u{0D3E}'));  // U+0D3E MALAYALAM VOWEL SIGN AA
     /// ```
 
-    pub fn get_grapheme_extend();
+    pub const fn grapheme_extend() => SINGLETON_PROPS_GR_EXT_V1;
+    pub fn load_grapheme_extend();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Grapheme_Link";
     marker: GraphemeLinkProperty;
-    key: crate::provider::key::GRAPHEME_LINK_V1;
+    keyed_data_marker: GraphemeLinkV1Marker;
     func:
     /// Deprecated property. Formerly proposed for programmatic determination of grapheme
     /// cluster boundaries.
 
-    pub fn get_grapheme_link();
+    pub const fn grapheme_link() => SINGLETON_PROPS_GR_LINK_V1;
+    pub fn load_grapheme_link();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Hex_Digit";
     marker: HexDigitProperty;
-    key: crate::provider::key::HEX_DIGIT_V1;
+    keyed_data_marker: HexDigitV1Marker;
     func:
     /// Characters commonly used for the representation of hexadecimal numbers, plus their
     /// compatibility equivalents
@@ -784,12 +977,7 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_hex_digit(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let hex_digit = &data_struct.inv_list;
+    /// let hex_digit = sets::hex_digit();
     ///
     /// assert!(hex_digit.contains('0'));
     /// assert!(!hex_digit.contains('੩'));  // U+0A69 GURMUKHI DIGIT THREE
@@ -799,27 +987,29 @@ make_set_property! {
     /// assert!(!hex_digit.contains('Ä'));  // U+00C4 LATIN CAPITAL LETTER A WITH DIAERESIS
     /// ```
 
-    pub fn get_hex_digit();
+    pub const fn hex_digit() => SINGLETON_PROPS_HEX_V1;
+    pub fn load_hex_digit();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Hyphen";
     marker: HyphenProperty;
-    key: crate::provider::key::HYPHEN_V1;
+    keyed_data_marker: HyphenV1Marker;
     func:
     /// Deprecated property. Dashes which are used to mark connections between pieces of
     /// words, plus the Katakana middle dot.
 
-    pub fn get_hyphen();
+    pub const fn hyphen() => SINGLETON_PROPS_HYPHEN_V1;
+    pub fn load_hyphen();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Id_Continue";
     marker: IdContinueProperty;
-    key: crate::provider::key::ID_CONTINUE_V1;
+    keyed_data_marker: IdContinueV1Marker;
     func:
     /// Characters that can come after the first character in an identifier. If using NFKC to
-    /// fold differences between characters, use [`get_xid_continue`] instead.  See
+    /// fold differences between characters, use [`load_xid_continue`] instead.  See
     /// [`Unicode Standard Annex #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for
     /// more details.
     ///
@@ -828,28 +1018,24 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_id_continue(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let id_continue = &data_struct.inv_list;
+    /// let id_continue = sets::id_continue();
     ///
     /// assert!(id_continue.contains('x'));
     /// assert!(id_continue.contains('1'));
     /// assert!(id_continue.contains('_'));
     /// assert!(id_continue.contains('ߝ'));  // U+07DD NKO LETTER FA
     /// assert!(!id_continue.contains('ⓧ'));  // U+24E7 CIRCLED LATIN SMALL LETTER X
-    /// assert!(id_continue.contains_u32(0xFC5E));  // ARABIC LIGATURE SHADDA WITH DAMMATAN ISOLATED FORM
+    /// assert!(id_continue.contains32(0xFC5E));  // ARABIC LIGATURE SHADDA WITH DAMMATAN ISOLATED FORM
     /// ```
 
-    pub fn get_id_continue();
+    pub const fn id_continue() => SINGLETON_PROPS_IDC_V1;
+    pub fn load_id_continue();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Ideographic";
     marker: IdeographicProperty;
-    key: crate::provider::key::IDEOGRAPHIC_V1;
+    keyed_data_marker: IdeographicV1Marker;
     func:
     /// Characters considered to be CJKV (Chinese, Japanese, Korean, and Vietnamese)
     /// ideographs, or related siniform ideographs
@@ -859,27 +1045,23 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_ideographic(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let ideographic = &data_struct.inv_list;
+    /// let ideographic = sets::ideographic();
     ///
     /// assert!(ideographic.contains('川'));  // U+5DDD CJK UNIFIED IDEOGRAPH-5DDD
     /// assert!(!ideographic.contains('밥'));  // U+BC25 HANGUL SYLLABLE BAB
     /// ```
 
-    pub fn get_ideographic();
+    pub const fn ideographic() => SINGLETON_PROPS_IDEO_V1;
+    pub fn load_ideographic();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Id_Start";
     marker: IdStartProperty;
-    key: crate::provider::key::ID_START_V1;
+    keyed_data_marker: IdStartV1Marker;
     func:
     /// Characters that can begin an identifier. If using NFKC to fold differences between
-    /// characters, use [`get_xid_start`] instead.  See [`Unicode Standard Annex
+    /// characters, use [`load_xid_start`] instead.  See [`Unicode Standard Annex
     /// #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for more details.
     ///
     /// # Example
@@ -887,28 +1069,24 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_id_start(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let id_start = &data_struct.inv_list;
+    /// let id_start = sets::id_start();
     ///
     /// assert!(id_start.contains('x'));
     /// assert!(!id_start.contains('1'));
     /// assert!(!id_start.contains('_'));
     /// assert!(id_start.contains('ߝ'));  // U+07DD NKO LETTER FA
     /// assert!(!id_start.contains('ⓧ'));  // U+24E7 CIRCLED LATIN SMALL LETTER X
-    /// assert!(id_start.contains_u32(0xFC5E));  // ARABIC LIGATURE SHADDA WITH DAMMATAN ISOLATED FORM
+    /// assert!(id_start.contains32(0xFC5E));  // ARABIC LIGATURE SHADDA WITH DAMMATAN ISOLATED FORM
     /// ```
 
-    pub fn get_id_start();
+    pub const fn id_start() => SINGLETON_PROPS_IDS_V1;
+    pub fn load_id_start();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Ids_Binary_Operator";
     marker: IdsBinaryOperatorProperty;
-    key: crate::provider::key::IDS_BINARY_OPERATOR_V1;
+    keyed_data_marker: IdsBinaryOperatorV1Marker;
     func:
     /// Characters used in Ideographic Description Sequences
     ///
@@ -917,24 +1095,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_ids_binary_operator(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let ids_binary_operator = &data_struct.inv_list;
+    /// let ids_binary_operator = sets::ids_binary_operator();
     ///
-    /// assert!(ids_binary_operator.contains_u32(0x2FF5));  // IDEOGRAPHIC DESCRIPTION CHARACTER SURROUND FROM ABOVE
-    /// assert!(!ids_binary_operator.contains_u32(0x3006));  // IDEOGRAPHIC CLOSING MARK
+    /// assert!(ids_binary_operator.contains32(0x2FF5));  // IDEOGRAPHIC DESCRIPTION CHARACTER SURROUND FROM ABOVE
+    /// assert!(!ids_binary_operator.contains32(0x3006));  // IDEOGRAPHIC CLOSING MARK
     /// ```
 
-    pub fn get_ids_binary_operator();
+    pub const fn ids_binary_operator() => SINGLETON_PROPS_IDSB_V1;
+    pub fn load_ids_binary_operator();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Ids_Trinary_Operator";
     marker: IdsTrinaryOperatorProperty;
-    key: crate::provider::key::IDS_TRINARY_OPERATOR_V1;
+    keyed_data_marker: IdsTrinaryOperatorV1Marker;
     func:
     /// Characters used in Ideographic Description Sequences
     ///
@@ -943,27 +1117,23 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_ids_trinary_operator(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let ids_trinary_operator = &data_struct.inv_list;
+    /// let ids_trinary_operator = sets::ids_trinary_operator();
     ///
-    /// assert!(ids_trinary_operator.contains_u32(0x2FF2));  // IDEOGRAPHIC DESCRIPTION CHARACTER LEFT TO MIDDLE AND RIGHT
-    /// assert!(ids_trinary_operator.contains_u32(0x2FF3));  // IDEOGRAPHIC DESCRIPTION CHARACTER ABOVE TO MIDDLE AND BELOW
-    /// assert!(!ids_trinary_operator.contains_u32(0x2FF4));
-    /// assert!(!ids_trinary_operator.contains_u32(0x2FF5));  // IDEOGRAPHIC DESCRIPTION CHARACTER SURROUND FROM ABOVE
-    /// assert!(!ids_trinary_operator.contains_u32(0x3006));  // IDEOGRAPHIC CLOSING MARK
+    /// assert!(ids_trinary_operator.contains32(0x2FF2));  // IDEOGRAPHIC DESCRIPTION CHARACTER LEFT TO MIDDLE AND RIGHT
+    /// assert!(ids_trinary_operator.contains32(0x2FF3));  // IDEOGRAPHIC DESCRIPTION CHARACTER ABOVE TO MIDDLE AND BELOW
+    /// assert!(!ids_trinary_operator.contains32(0x2FF4));
+    /// assert!(!ids_trinary_operator.contains32(0x2FF5));  // IDEOGRAPHIC DESCRIPTION CHARACTER SURROUND FROM ABOVE
+    /// assert!(!ids_trinary_operator.contains32(0x3006));  // IDEOGRAPHIC CLOSING MARK
     /// ```
 
-    pub fn get_ids_trinary_operator();
+    pub const fn ids_trinary_operator() => SINGLETON_PROPS_IDST_V1;
+    pub fn load_ids_trinary_operator();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Join_Control";
     marker: JoinControlProperty;
-    key: crate::provider::key::JOIN_CONTROL_V1;
+    keyed_data_marker: JoinControlV1Marker;
     func:
     /// Format control characters which have specific functions for control of cursive joining
     /// and ligation
@@ -973,25 +1143,21 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_join_control(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let join_control = &data_struct.inv_list;
+    /// let join_control = sets::join_control();
     ///
-    /// assert!(join_control.contains_u32(0x200C));  // ZERO WIDTH NON-JOINER
-    /// assert!(join_control.contains_u32(0x200D));  // ZERO WIDTH JOINER
-    /// assert!(!join_control.contains_u32(0x200E));
+    /// assert!(join_control.contains32(0x200C));  // ZERO WIDTH NON-JOINER
+    /// assert!(join_control.contains32(0x200D));  // ZERO WIDTH JOINER
+    /// assert!(!join_control.contains32(0x200E));
     /// ```
 
-    pub fn get_join_control();
+    pub const fn join_control() => SINGLETON_PROPS_JOIN_C_V1;
+    pub fn load_join_control();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Logical_Order_Exception";
     marker: LogicalOrderExceptionProperty;
-    key: crate::provider::key::LOGICAL_ORDER_EXCEPTION_V1;
+    keyed_data_marker: LogicalOrderExceptionV1Marker;
     func:
     /// A small number of spacing vowel letters occurring in certain Southeast Asian scripts such as Thai and Lao
     ///
@@ -1000,24 +1166,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_logical_order_exception(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let logical_order_exception = &data_struct.inv_list;
+    /// let logical_order_exception = sets::logical_order_exception();
     ///
     /// assert!(logical_order_exception.contains('ແ'));  // U+0EC1 LAO VOWEL SIGN EI
     /// assert!(!logical_order_exception.contains('ະ'));  // U+0EB0 LAO VOWEL SIGN A
     /// ```
 
-    pub fn get_logical_order_exception();
+    pub const fn logical_order_exception() => SINGLETON_PROPS_LOE_V1;
+    pub fn load_logical_order_exception();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Lowercase";
     marker: LowercaseProperty;
-    key: crate::provider::key::LOWERCASE_V1;
+    keyed_data_marker: LowercaseV1Marker;
     func:
     /// Lowercase characters
     ///
@@ -1026,24 +1188,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_lowercase(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let lowercase = &data_struct.inv_list;
+    /// let lowercase = sets::lowercase();
     ///
     /// assert!(lowercase.contains('a'));
     /// assert!(!lowercase.contains('A'));
     /// ```
 
-    pub fn get_lowercase();
+    pub const fn lowercase() => SINGLETON_PROPS_LOWER_V1;
+    pub fn load_lowercase();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Math";
     marker: MathProperty;
-    key: crate::provider::key::MATH_V1;
+    keyed_data_marker: MathV1Marker;
     func:
     /// Characters used in mathematical notation
     ///
@@ -1052,12 +1210,7 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_math(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let math = &data_struct.inv_list;
+    /// let math = sets::math();
     ///
     /// assert!(math.contains('='));
     /// assert!(math.contains('+'));
@@ -1067,13 +1220,14 @@ make_set_property! {
     /// assert!(math.contains('∕'));  // U+2215 DIVISION SLASH
     /// ```
 
-    pub fn get_math();
+    pub const fn math() => SINGLETON_PROPS_MATH_V1;
+    pub fn load_math();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Noncharacter_Code_Point";
     marker: NoncharacterCodePointProperty;
-    key: crate::provider::key::NONCHARACTER_CODE_POINT_V1;
+    keyed_data_marker: NoncharacterCodePointV1Marker;
     func:
     /// Code points permanently reserved for internal use
     ///
@@ -1082,65 +1236,65 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_noncharacter_code_point(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let noncharacter_code_point = &data_struct.inv_list;
+    /// let noncharacter_code_point = sets::noncharacter_code_point();
     ///
-    /// assert!(noncharacter_code_point.contains_u32(0xFDD0));
-    /// assert!(noncharacter_code_point.contains_u32(0xFFFF));
-    /// assert!(!noncharacter_code_point.contains_u32(0x10000));
+    /// assert!(noncharacter_code_point.contains32(0xFDD0));
+    /// assert!(noncharacter_code_point.contains32(0xFFFF));
+    /// assert!(!noncharacter_code_point.contains32(0x10000));
     /// ```
 
-    pub fn get_noncharacter_code_point();
+    pub const fn noncharacter_code_point() => SINGLETON_PROPS_NCHAR_V1;
+    pub fn load_noncharacter_code_point();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "NFC_Inert";
     marker: NfcInertProperty;
-    key: crate::provider::key::NFC_INERT_V1;
+    keyed_data_marker: NfcInertV1Marker;
     func:
     /// Characters that are inert under NFC, i.e., they do not interact with adjacent characters
 
-    pub fn get_nfc_inert();
+    pub const fn nfc_inert() => SINGLETON_PROPS_NFCINERT_V1;
+    pub fn load_nfc_inert();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "NFD_Inert";
     marker: NfdInertProperty;
-    key: crate::provider::key::NFD_INERT_V1;
+    keyed_data_marker: NfdInertV1Marker;
     func:
     /// Characters that are inert under NFD, i.e., they do not interact with adjacent characters
 
-    pub fn get_nfd_inert();
+    pub const fn nfd_inert() => SINGLETON_PROPS_NFDINERT_V1;
+    pub fn load_nfd_inert();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "NFKC_Inert";
     marker: NfkcInertProperty;
-    key: crate::provider::key::NFKC_INERT_V1;
+    keyed_data_marker: NfkcInertV1Marker;
     func:
     /// Characters that are inert under NFKC, i.e., they do not interact with adjacent characters
 
-    pub fn get_nfkc_inert();
+    pub const fn nfkc_inert() => SINGLETON_PROPS_NFKCINERT_V1;
+    pub fn load_nfkc_inert();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "NFKD_Inert";
     marker: NfkdInertProperty;
-    key: crate::provider::key::NFKD_INERT_V1;
+    keyed_data_marker: NfkdInertV1Marker;
     func:
     /// Characters that are inert under NFKD, i.e., they do not interact with adjacent characters
 
-    pub fn get_nfkd_inert();
+    pub const fn nfkd_inert() => SINGLETON_PROPS_NFKDINERT_V1;
+    pub fn load_nfkd_inert();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Pattern_Syntax";
     marker: PatternSyntaxProperty;
-    key: crate::provider::key::PATTERN_SYNTAX_V1;
+    keyed_data_marker: PatternSyntaxV1Marker;
     func:
     /// Characters used as syntax in patterns (such as regular expressions). See [`Unicode
     /// Standard Annex #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for more
@@ -1151,25 +1305,21 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_pattern_syntax(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let pattern_syntax = &data_struct.inv_list;
+    /// let pattern_syntax = sets::pattern_syntax();
     ///
     /// assert!(pattern_syntax.contains('{'));
     /// assert!(pattern_syntax.contains('⇒'));  // U+21D2 RIGHTWARDS DOUBLE ARROW
     /// assert!(!pattern_syntax.contains('0'));
     /// ```
 
-    pub fn get_pattern_syntax();
+    pub const fn pattern_syntax() => SINGLETON_PROPS_PAT_SYN_V1;
+    pub fn load_pattern_syntax();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Pattern_White_Space";
     marker: PatternWhiteSpaceProperty;
-    key: crate::provider::key::PATTERN_WHITE_SPACE_V1;
+    keyed_data_marker: PatternWhiteSpaceV1Marker;
     func:
     /// Characters used as whitespace in patterns (such as regular expressions).  See
     /// [`Unicode Standard Annex #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for
@@ -1180,48 +1330,46 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_pattern_white_space(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let pattern_white_space = &data_struct.inv_list;
+    /// let pattern_white_space = sets::pattern_white_space();
     ///
     /// assert!(pattern_white_space.contains(' '));
-    /// assert!(pattern_white_space.contains_u32(0x2029));  // PARAGRAPH SEPARATOR
-    /// assert!(pattern_white_space.contains_u32(0x000A));  // NEW LINE
-    /// assert!(!pattern_white_space.contains_u32(0x00A0));  // NO-BREAK SPACE
+    /// assert!(pattern_white_space.contains32(0x2029));  // PARAGRAPH SEPARATOR
+    /// assert!(pattern_white_space.contains32(0x000A));  // NEW LINE
+    /// assert!(!pattern_white_space.contains32(0x00A0));  // NO-BREAK SPACE
     /// ```
 
-    pub fn get_pattern_white_space();
+    pub const fn pattern_white_space() => SINGLETON_PROPS_PAT_WS_V1;
+    pub fn load_pattern_white_space();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Prepended_Concatenation_Mark";
     marker: PrependedConcatenationMarkProperty;
-    key: crate::provider::key::PREPENDED_CONCATENATION_MARK_V1;
+    keyed_data_marker: PrependedConcatenationMarkV1Marker;
     func:
     /// A small class of visible format controls, which precede and then span a sequence of
     /// other characters, usually digits.
 
-    pub fn get_prepended_concatenation_mark();
+    pub const fn prepended_concatenation_mark() => SINGLETON_PROPS_PCM_V1;
+    pub fn load_prepended_concatenation_mark();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Print";
     marker: PrintProperty;
-    key: crate::provider::key::PRINT_V1;
+    keyed_data_marker: PrintV1Marker;
     func:
     /// Printable characters (visible characters and whitespace).
     /// This is defined for POSIX compatibility.
 
-    pub fn get_print();
+    pub const fn print() => SINGLETON_PROPS_PRINT_V1;
+    pub fn load_print();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Quotation_Mark";
     marker: QuotationMarkProperty;
-    key: crate::provider::key::QUOTATION_MARK_V1;
+    keyed_data_marker: QuotationMarkV1Marker;
     func:
     /// Punctuation characters that function as quotation marks.
     ///
@@ -1230,25 +1378,21 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_quotation_mark(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let quotation_mark = &data_struct.inv_list;
+    /// let quotation_mark = sets::quotation_mark();
     ///
     /// assert!(quotation_mark.contains('\''));
     /// assert!(quotation_mark.contains('„'));  // U+201E DOUBLE LOW-9 QUOTATION MARK
     /// assert!(!quotation_mark.contains('<'));
     /// ```
 
-    pub fn get_quotation_mark();
+    pub const fn quotation_mark() => SINGLETON_PROPS_QMARK_V1;
+    pub fn load_quotation_mark();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Radical";
     marker: RadicalProperty;
-    key: crate::provider::key::RADICAL_V1;
+    keyed_data_marker: RadicalV1Marker;
     func:
     /// Characters used in the definition of Ideographic Description Sequences
     ///
@@ -1257,24 +1401,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_radical(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let radical = &data_struct.inv_list;
+    /// let radical = sets::radical();
     ///
     /// assert!(radical.contains('⺆'));  // U+2E86 CJK RADICAL BOX
     /// assert!(!radical.contains('丹'));  // U+F95E CJK COMPATIBILITY IDEOGRAPH-F95E
     /// ```
 
-    pub fn get_radical();
+    pub const fn radical() => SINGLETON_PROPS_RADICAL_V1;
+    pub fn load_radical();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Regional_Indicator";
     marker: RegionalIndicatorProperty;
-    key: crate::provider::key::REGIONAL_INDICATOR_V1;
+    keyed_data_marker: RegionalIndicatorV1Marker;
     func:
     /// Regional indicator characters, U+1F1E6..U+1F1FF
     ///
@@ -1283,25 +1423,21 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_regional_indicator(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let regional_indicator = &data_struct.inv_list;
+    /// let regional_indicator = sets::regional_indicator();
     ///
     /// assert!(regional_indicator.contains('🇹'));  // U+1F1F9 REGIONAL INDICATOR SYMBOL LETTER T
     /// assert!(!regional_indicator.contains('Ⓣ'));  // U+24C9 CIRCLED LATIN CAPITAL LETTER T
     /// assert!(!regional_indicator.contains('T'));
     /// ```
 
-    pub fn get_regional_indicator();
+    pub const fn regional_indicator() => SINGLETON_PROPS_RI_V1;
+    pub fn load_regional_indicator();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Soft_Dotted";
     marker: SoftDottedProperty;
-    key: crate::provider::key::SOFT_DOTTED_V1;
+    keyed_data_marker: SoftDottedV1Marker;
     func:
     /// Characters with a "soft dot", like i or j. An accent placed on these characters causes
     /// the dot to disappear.
@@ -1311,46 +1447,44 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_soft_dotted(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let soft_dotted = &data_struct.inv_list;
+    /// let soft_dotted = sets::soft_dotted();
     ///
     /// assert!(soft_dotted.contains('і'));  //U+0456 CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I
     /// assert!(!soft_dotted.contains('ı'));  // U+0131 LATIN SMALL LETTER DOTLESS I
     /// ```
 
-    pub fn get_soft_dotted();
+    pub const fn soft_dotted() => SINGLETON_PROPS_SD_V1;
+    pub fn load_soft_dotted();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Segment_Starter";
     marker: SegmentStarterProperty;
-    key: crate::provider::key::SEGMENT_STARTER_V1;
+    keyed_data_marker: SegmentStarterV1Marker;
     func:
     /// Characters that are starters in terms of Unicode normalization and combining character
     /// sequences
 
-    pub fn get_segment_starter();
+    pub const fn segment_starter() => SINGLETON_PROPS_SEGSTART_V1;
+    pub fn load_segment_starter();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Case_Sensitive";
     marker: CaseSensitiveProperty;
-    key: crate::provider::key::CASE_SENSITIVE_V1;
+    keyed_data_marker: CaseSensitiveV1Marker;
     func:
     /// Characters that are either the source of a case mapping or in the target of a case
     /// mapping
 
-    pub fn get_case_sensitive();
+    pub const fn case_sensitive() => SINGLETON_PROPS_SENSITIVE_V1;
+    pub fn load_case_sensitive();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Sentence_Terminal";
     marker: SentenceTerminalProperty;
-    key: crate::provider::key::SENTENCE_TERMINAL_V1;
+    keyed_data_marker: SentenceTerminalV1Marker;
     func:
     /// Punctuation characters that generally mark the end of sentences
     ///
@@ -1359,12 +1493,7 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_sentence_terminal(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let sentence_terminal = &data_struct.inv_list;
+    /// let sentence_terminal = sets::sentence_terminal();
     ///
     /// assert!(sentence_terminal.contains('.'));
     /// assert!(sentence_terminal.contains('?'));
@@ -1373,13 +1502,14 @@ make_set_property! {
     /// assert!(!sentence_terminal.contains('¿'));  // U+00BF INVERTED QUESTION MARK
     /// ```
 
-    pub fn get_sentence_terminal();
+    pub const fn sentence_terminal() => SINGLETON_PROPS_STERM_V1;
+    pub fn load_sentence_terminal();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Terminal_Punctuation";
     marker: TerminalPunctuationProperty;
-    key: crate::provider::key::TERMINAL_PUNCTUATION_V1;
+    keyed_data_marker: TerminalPunctuationV1Marker;
     func:
     /// Punctuation characters that generally mark the end of textual units
     ///
@@ -1388,12 +1518,7 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_terminal_punctuation(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let terminal_punctuation = &data_struct.inv_list;
+    /// let terminal_punctuation = sets::terminal_punctuation();
     ///
     /// assert!(terminal_punctuation.contains('.'));
     /// assert!(terminal_punctuation.contains('?'));
@@ -1402,13 +1527,14 @@ make_set_property! {
     /// assert!(!terminal_punctuation.contains('¿'));  // U+00BF INVERTED QUESTION MARK
     /// ```
 
-    pub fn get_terminal_punctuation();
+    pub const fn terminal_punctuation() => SINGLETON_PROPS_TERM_V1;
+    pub fn load_terminal_punctuation();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Unified_Ideograph";
     marker: UnifiedIdeographProperty;
-    key: crate::provider::key::UNIFIED_IDEOGRAPH_V1;
+    keyed_data_marker: UnifiedIdeographV1Marker;
     func:
     /// A property which specifies the exact set of Unified CJK Ideographs in the standard
     ///
@@ -1417,25 +1543,21 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_unified_ideograph(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let unified_ideograph = &data_struct.inv_list;
+    /// let unified_ideograph = sets::unified_ideograph();
     ///
     /// assert!(unified_ideograph.contains('川'));  // U+5DDD CJK UNIFIED IDEOGRAPH-5DDD
     /// assert!(unified_ideograph.contains('木'));  // U+6728 CJK UNIFIED IDEOGRAPH-6728
     /// assert!(!unified_ideograph.contains('𛅸'));  // U+1B178 NUSHU CHARACTER-1B178
     /// ```
 
-    pub fn get_unified_ideograph();
+    pub const fn unified_ideograph() => SINGLETON_PROPS_UIDEO_V1;
+    pub fn load_unified_ideograph();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Uppercase";
     marker: UppercaseProperty;
-    key: crate::provider::key::UPPERCASE_V1;
+    keyed_data_marker: UppercaseV1Marker;
     func:
     /// Uppercase characters
     ///
@@ -1444,24 +1566,20 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_uppercase(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let uppercase = &data_struct.inv_list;
+    /// let uppercase = sets::uppercase();
     ///
     /// assert!(uppercase.contains('U'));
     /// assert!(!uppercase.contains('u'));
     /// ```
 
-    pub fn get_uppercase();
+    pub const fn uppercase() => SINGLETON_PROPS_UPPER_V1;
+    pub fn load_uppercase();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Variation_Selector";
     marker: VariationSelectorProperty;
-    key: crate::provider::key::VARIATION_SELECTOR_V1;
+    keyed_data_marker: VariationSelectorV1Marker;
     func:
     /// Characters that are Variation Selectors.
     ///
@@ -1470,27 +1588,23 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_variation_selector(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let variation_selector = &data_struct.inv_list;
+    /// let variation_selector = sets::variation_selector();
     ///
-    /// assert!(variation_selector.contains_u32(0x180D));  // MONGOLIAN FREE VARIATION SELECTOR THREE
-    /// assert!(!variation_selector.contains_u32(0x303E));  // IDEOGRAPHIC VARIATION INDICATOR
-    /// assert!(variation_selector.contains_u32(0xFE0F));  // VARIATION SELECTOR-16
-    /// assert!(!variation_selector.contains_u32(0xFE10));  // PRESENTATION FORM FOR VERTICAL COMMA
-    /// assert!(variation_selector.contains_u32(0xE01EF));  // VARIATION SELECTOR-256
+    /// assert!(variation_selector.contains32(0x180D));  // MONGOLIAN FREE VARIATION SELECTOR THREE
+    /// assert!(!variation_selector.contains32(0x303E));  // IDEOGRAPHIC VARIATION INDICATOR
+    /// assert!(variation_selector.contains32(0xFE0F));  // VARIATION SELECTOR-16
+    /// assert!(!variation_selector.contains32(0xFE10));  // PRESENTATION FORM FOR VERTICAL COMMA
+    /// assert!(variation_selector.contains32(0xE01EF));  // VARIATION SELECTOR-256
     /// ```
 
-    pub fn get_variation_selector();
+    pub const fn variation_selector() => SINGLETON_PROPS_VS_V1;
+    pub fn load_variation_selector();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "White_Space";
     marker: WhiteSpaceProperty;
-    key: crate::provider::key::WHITE_SPACE_V1;
+    keyed_data_marker: WhiteSpaceV1Marker;
     func:
     /// Spaces, separator characters and other control characters which should be treated by
     /// programming languages as "white space" for the purpose of parsing elements
@@ -1500,39 +1614,36 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_white_space(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let white_space = &data_struct.inv_list;
+    /// let white_space = sets::white_space();
     ///
     /// assert!(white_space.contains(' '));
-    /// assert!(white_space.contains_u32(0x000A));  // NEW LINE
-    /// assert!(white_space.contains_u32(0x00A0));  // NO-BREAK SPACE
-    /// assert!(!white_space.contains_u32(0x200B));  // ZERO WIDTH SPACE
+    /// assert!(white_space.contains32(0x000A));  // NEW LINE
+    /// assert!(white_space.contains32(0x00A0));  // NO-BREAK SPACE
+    /// assert!(!white_space.contains32(0x200B));  // ZERO WIDTH SPACE
     /// ```
 
-    pub fn get_white_space();
+    pub const fn white_space() => SINGLETON_PROPS_WSPACE_V1;
+    pub fn load_white_space();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "Xdigit";
     marker: XdigitProperty;
-    key: crate::provider::key::XDIGIT_V1;
+    keyed_data_marker: XdigitV1Marker;
     func:
     /// Hexadecimal digits
     /// This is defined for POSIX compatibility.
 
-    pub fn get_xdigit();
+    pub const fn xdigit() => SINGLETON_PROPS_XDIGIT_V1;
+    pub fn load_xdigit();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "XID_Continue";
     marker: XidContinueProperty;
-    key: crate::provider::key::XID_CONTINUE_V1;
+    keyed_data_marker: XidContinueV1Marker;
     func:
-    /// Characters that can begin an identifier.  See [`Unicode Standard Annex
+    /// Characters that can come after the first character in an identifier.  See [`Unicode Standard Annex
     /// #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for more details.
     ///
     /// # Example
@@ -1540,30 +1651,26 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_xid_continue(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let xid_continue = &data_struct.inv_list;
+    /// let xid_continue = sets::xid_continue();
     ///
     /// assert!(xid_continue.contains('x'));
     /// assert!(xid_continue.contains('1'));
     /// assert!(xid_continue.contains('_'));
     /// assert!(xid_continue.contains('ߝ'));  // U+07DD NKO LETTER FA
     /// assert!(!xid_continue.contains('ⓧ'));  // U+24E7 CIRCLED LATIN SMALL LETTER X
-    /// assert!(!xid_continue.contains_u32(0xFC5E));  // ARABIC LIGATURE SHADDA WITH DAMMATAN ISOLATED FORM
+    /// assert!(!xid_continue.contains32(0xFC5E));  // ARABIC LIGATURE SHADDA WITH DAMMATAN ISOLATED FORM
     /// ```
 
-    pub fn get_xid_continue();
+    pub const fn xid_continue() => SINGLETON_PROPS_XIDC_V1;
+    pub fn load_xid_continue();
 }
 
-make_set_property! {
+make_code_point_set_property! {
     property: "XID_Start";
     marker: XidStartProperty;
-    key: crate::provider::key::XID_START_V1;
+    keyed_data_marker: XidStartV1Marker;
     func:
-    /// Characters that can come after the first character in an identifier. See [`Unicode
+    /// Characters that can begin an identifier. See [`Unicode
     /// Standard Annex #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for more
     /// details.
     ///
@@ -1572,47 +1679,337 @@ make_set_property! {
     /// ```
     /// use icu_properties::sets;
     ///
-    /// let provider = icu_testdata::get_provider();
-    /// let payload =
-    ///     sets::get_xid_start(&provider)
-    ///         .expect("The data should be valid");
-    /// let data_struct = payload.get();
-    /// let xid_start = &data_struct.inv_list;
+    /// let xid_start = sets::xid_start();
     ///
     /// assert!(xid_start.contains('x'));
     /// assert!(!xid_start.contains('1'));
     /// assert!(!xid_start.contains('_'));
     /// assert!(xid_start.contains('ߝ'));  // U+07DD NKO LETTER FA
     /// assert!(!xid_start.contains('ⓧ'));  // U+24E7 CIRCLED LATIN SMALL LETTER X
-    /// assert!(!xid_start.contains_u32(0xFC5E));  // ARABIC LIGATURE SHADDA WITH DAMMATAN ISOLATED FORM
+    /// assert!(!xid_start.contains32(0xFC5E));  // ARABIC LIGATURE SHADDA WITH DAMMATAN ISOLATED FORM
     /// ```
 
-    pub fn get_xid_start();
+    pub const fn xid_start() => SINGLETON_PROPS_XIDS_V1;
+    pub fn load_xid_start();
+}
+
+//
+// Binary property getter fns
+// (data as sets of strings + code points)
+//
+
+macro_rules! make_unicode_set_property {
+    (
+        // currently unused
+        property: $property:expr;
+        // currently unused
+        marker: $marker_name:ident;
+        keyed_data_marker: $keyed_data_marker:ty;
+        func:
+        $(#[$doc:meta])+
+        $cvis:vis const fn $constname:ident() => $singleton:ident;
+        $vis:vis fn $funcname:ident();
+    ) => {
+        #[doc = concat!("[`", stringify!($constname), "()`] with a runtime data provider argument.")]
+        $vis fn $funcname(
+            provider: &(impl DataProvider<$keyed_data_marker> + ?Sized)
+        ) -> Result<UnicodeSetData, PropertiesError> {
+            Ok(provider.load(Default::default()).and_then(DataResponse::take_payload).map(UnicodeSetData::from_data)?)
+        }
+        $(#[$doc])*
+        ///
+        /// ✨ **Enabled with the `"data"` feature.**
+        #[cfg(feature = "data")]
+        $cvis const fn $constname() -> UnicodeSetDataBorrowed<'static> {
+            UnicodeSetDataBorrowed {
+                set: crate::provider::Baked::$singleton
+            }
+        }
+    }
+}
+
+make_unicode_set_property! {
+    property: "Basic_Emoji";
+    marker: BasicEmojiProperty;
+    keyed_data_marker: BasicEmojiV1Marker;
+    func:
+    /// Characters and character sequences intended for general-purpose, independent, direct input.
+    /// See [`Unicode Technical Standard #51`](https://unicode.org/reports/tr51/) for more
+    /// details.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use icu_properties::sets;
+    ///
+    /// let basic_emoji = sets::basic_emoji();
+    ///
+    /// assert!(!basic_emoji.contains32(0x0020));
+    /// assert!(!basic_emoji.contains_char('\n'));
+    /// assert!(basic_emoji.contains_char('🦃')); // U+1F983 TURKEY
+    /// assert!(basic_emoji.contains("\u{1F983}"));
+    /// assert!(basic_emoji.contains("\u{1F6E4}\u{FE0F}")); // railway track
+    /// assert!(!basic_emoji.contains("\u{0033}\u{FE0F}\u{20E3}"));  // Emoji_Keycap_Sequence, keycap 3
+    /// ```
+    pub const fn basic_emoji() => SINGLETON_PROPS_BASIC_EMOJI_V1;
+    pub fn load_basic_emoji();
 }
 
 //
 // Enumerated property getter fns
 //
 
-/// Return a [`UnicodeSet`] for a value or a grouping of values of the General_Category property. See [`GeneralCategoryGroup`].
-///
-/// [`UnicodeSet`]: icu_uniset::UnicodeSet
-pub fn get_for_general_category_group<D>(
-    provider: &D,
+/// Return a [`CodePointSetData`] for a value or a grouping of values of the General_Category property. See [`GeneralCategoryGroup`].
+pub fn load_for_general_category_group(
+    provider: &(impl DataProvider<GeneralCategoryV1Marker> + ?Sized),
     enum_val: GeneralCategoryGroup,
-) -> Result<UnicodeSet<'static>, PropertiesError>
-where
-    D: DynProvider<UnicodePropertyMapV1Marker<GeneralCategory>> + ?Sized,
-{
-    let gc_map_payload: DataPayload<UnicodePropertyMapV1Marker<GeneralCategory>> =
-        maps::get_general_category(provider)?;
-    let gc_data_struct = gc_map_payload.get();
-    let gc = &gc_data_struct.code_point_trie;
-    let matching_gc_ranges = gc
+) -> Result<CodePointSetData, PropertiesError> {
+    let gc_map_payload = maps::load_general_category(provider)?;
+    let gc_map = gc_map_payload.as_borrowed();
+    let matching_gc_ranges = gc_map
         .iter_ranges()
         .filter(|cpm_range| (1 << cpm_range.value as u32) & enum_val.0 != 0)
         .map(|cpm_range| cpm_range.range);
-    Ok(UnicodeSet::from_iter(matching_gc_ranges))
+    let set = CodePointInversionList::from_iter(matching_gc_ranges);
+    Ok(CodePointSetData::from_code_point_inversion_list(set))
+}
+
+/// Return a [`CodePointSetData`] for a value or a grouping of values of the General_Category property. See [`GeneralCategoryGroup`].
+#[cfg(feature = "data")]
+pub fn for_general_category_group(enum_val: GeneralCategoryGroup) -> CodePointSetData {
+    let matching_gc_ranges = maps::general_category()
+        .iter_ranges()
+        .filter(|cpm_range| (1 << cpm_range.value as u32) & enum_val.0 != 0)
+        .map(|cpm_range| cpm_range.range);
+    let set = CodePointInversionList::from_iter(matching_gc_ranges);
+    CodePointSetData::from_code_point_inversion_list(set)
+}
+
+/// Returns a type capable of looking up values for a property specified as a string, as long as it is a
+/// [binary property listed in ECMA-262][ecma], using strict matching on the names in the spec.
+///
+/// This handles every property required by ECMA-262 `/u` regular expressions, except for:
+///
+/// - `Script` and `General_Category`: handle these directly with [`maps::load_general_category()`] and
+///    [`maps::load_script()`].
+///    using property values parsed via [`GeneralCategory::get_name_to_enum_mapper()`] and [`Script::get_name_to_enum_mapper()`]
+///    if necessary.
+/// - `Script_Extensions`: handle this directly using APIs from [`crate::script`], like [`script::load_script_with_extensions_unstable()`]
+/// - `General_Category` mask values: Handle this alongside `General_Category` using [`GeneralCategoryGroup`],
+///    using property values parsed via [`GeneralCategoryGroup::get_name_to_enum_mapper()`] if necessary
+/// - `Assigned`, `All`, and `ASCII` pseudoproperties: Handle these using their equivalent sets:
+///    - `Any` can be expressed as the range `[\u{0}-\u{10FFFF}]`
+///    - `Assigned` can be expressed as the inverse of the set `gc=Cn` (i.e., `\P{gc=Cn}`).
+///    - `ASCII` can be expressed as the range `[\u{0}-\u{7F}]`
+/// - `General_Category` property values can themselves be treated like properties using a shorthand in ECMA262,
+///    simply create the corresponding `GeneralCategory` set.
+///
+/// ```rust
+/// use icu::properties::sets;
+///
+/// let emoji = sets::load_for_ecma262("Emoji")
+///         .expect("loading data failed");
+///
+/// assert!(emoji.contains('🔥')); // U+1F525 FIRE
+/// assert!(!emoji.contains('V'));
+/// ```
+///
+/// [ecma]: https://tc39.es/ecma262/#table-binary-unicode-properties
+#[cfg(feature = "data")]
+pub fn load_for_ecma262(name: &str) -> Result<CodePointSetDataBorrowed, PropertiesError> {
+    use crate::runtime::UnicodeProperty;
+
+    let prop = if let Some(prop) = UnicodeProperty::parse_ecma262_name(name) {
+        prop
+    } else {
+        return Err(PropertiesError::UnexpectedPropertyName);
+    };
+    Ok(match prop {
+        UnicodeProperty::AsciiHexDigit => ascii_hex_digit(),
+        UnicodeProperty::Alphabetic => alphabetic(),
+        UnicodeProperty::BidiControl => bidi_control(),
+        UnicodeProperty::BidiMirrored => bidi_mirrored(),
+        UnicodeProperty::CaseIgnorable => case_ignorable(),
+        UnicodeProperty::Cased => cased(),
+        UnicodeProperty::ChangesWhenCasefolded => changes_when_casefolded(),
+        UnicodeProperty::ChangesWhenCasemapped => changes_when_casemapped(),
+        UnicodeProperty::ChangesWhenLowercased => changes_when_lowercased(),
+        UnicodeProperty::ChangesWhenNfkcCasefolded => changes_when_nfkc_casefolded(),
+        UnicodeProperty::ChangesWhenTitlecased => changes_when_titlecased(),
+        UnicodeProperty::ChangesWhenUppercased => changes_when_uppercased(),
+        UnicodeProperty::Dash => dash(),
+        UnicodeProperty::DefaultIgnorableCodePoint => default_ignorable_code_point(),
+        UnicodeProperty::Deprecated => deprecated(),
+        UnicodeProperty::Diacritic => diacritic(),
+        UnicodeProperty::Emoji => emoji(),
+        UnicodeProperty::EmojiComponent => emoji_component(),
+        UnicodeProperty::EmojiModifier => emoji_modifier(),
+        UnicodeProperty::EmojiModifierBase => emoji_modifier_base(),
+        UnicodeProperty::EmojiPresentation => emoji_presentation(),
+        UnicodeProperty::ExtendedPictographic => extended_pictographic(),
+        UnicodeProperty::Extender => extender(),
+        UnicodeProperty::GraphemeBase => grapheme_base(),
+        UnicodeProperty::GraphemeExtend => grapheme_extend(),
+        UnicodeProperty::HexDigit => hex_digit(),
+        UnicodeProperty::IdsBinaryOperator => ids_binary_operator(),
+        UnicodeProperty::IdsTrinaryOperator => ids_trinary_operator(),
+        UnicodeProperty::IdContinue => id_continue(),
+        UnicodeProperty::IdStart => id_start(),
+        UnicodeProperty::Ideographic => ideographic(),
+        UnicodeProperty::JoinControl => join_control(),
+        UnicodeProperty::LogicalOrderException => logical_order_exception(),
+        UnicodeProperty::Lowercase => lowercase(),
+        UnicodeProperty::Math => math(),
+        UnicodeProperty::NoncharacterCodePoint => noncharacter_code_point(),
+        UnicodeProperty::PatternSyntax => pattern_syntax(),
+        UnicodeProperty::PatternWhiteSpace => pattern_white_space(),
+        UnicodeProperty::QuotationMark => quotation_mark(),
+        UnicodeProperty::Radical => radical(),
+        UnicodeProperty::RegionalIndicator => regional_indicator(),
+        UnicodeProperty::SentenceTerminal => sentence_terminal(),
+        UnicodeProperty::SoftDotted => soft_dotted(),
+        UnicodeProperty::TerminalPunctuation => terminal_punctuation(),
+        UnicodeProperty::UnifiedIdeograph => unified_ideograph(),
+        UnicodeProperty::Uppercase => uppercase(),
+        UnicodeProperty::VariationSelector => variation_selector(),
+        UnicodeProperty::WhiteSpace => white_space(),
+        UnicodeProperty::XidContinue => xid_continue(),
+        UnicodeProperty::XidStart => xid_start(),
+        _ => return Err(PropertiesError::UnexpectedPropertyName),
+    })
+}
+
+icu_provider::gen_any_buffer_data_constructors!(
+    locale: skip,
+    name: &str,
+    result: Result<CodePointSetData, PropertiesError>,
+    #[cfg(skip)]
+    functions: [
+        load_for_ecma262,
+        load_for_ecma262_with_any_provider,
+        load_for_ecma262_with_buffer_provider,
+        load_for_ecma262_unstable,
+    ]
+);
+
+#[doc = icu_provider::gen_any_buffer_unstable_docs!(UNSTABLE, load_for_ecma262)]
+pub fn load_for_ecma262_unstable<P>(
+    provider: &P,
+    name: &str,
+) -> Result<CodePointSetData, PropertiesError>
+where
+    P: ?Sized
+        + DataProvider<AsciiHexDigitV1Marker>
+        + DataProvider<AlphabeticV1Marker>
+        + DataProvider<BidiControlV1Marker>
+        + DataProvider<BidiMirroredV1Marker>
+        + DataProvider<CaseIgnorableV1Marker>
+        + DataProvider<CasedV1Marker>
+        + DataProvider<ChangesWhenCasefoldedV1Marker>
+        + DataProvider<ChangesWhenCasemappedV1Marker>
+        + DataProvider<ChangesWhenLowercasedV1Marker>
+        + DataProvider<ChangesWhenNfkcCasefoldedV1Marker>
+        + DataProvider<ChangesWhenTitlecasedV1Marker>
+        + DataProvider<ChangesWhenUppercasedV1Marker>
+        + DataProvider<DashV1Marker>
+        + DataProvider<DefaultIgnorableCodePointV1Marker>
+        + DataProvider<DeprecatedV1Marker>
+        + DataProvider<DiacriticV1Marker>
+        + DataProvider<EmojiV1Marker>
+        + DataProvider<EmojiComponentV1Marker>
+        + DataProvider<EmojiModifierV1Marker>
+        + DataProvider<EmojiModifierBaseV1Marker>
+        + DataProvider<EmojiPresentationV1Marker>
+        + DataProvider<ExtendedPictographicV1Marker>
+        + DataProvider<ExtenderV1Marker>
+        + DataProvider<GraphemeBaseV1Marker>
+        + DataProvider<GraphemeExtendV1Marker>
+        + DataProvider<HexDigitV1Marker>
+        + DataProvider<IdsBinaryOperatorV1Marker>
+        + DataProvider<IdsTrinaryOperatorV1Marker>
+        + DataProvider<IdContinueV1Marker>
+        + DataProvider<IdStartV1Marker>
+        + DataProvider<IdeographicV1Marker>
+        + DataProvider<JoinControlV1Marker>
+        + DataProvider<LogicalOrderExceptionV1Marker>
+        + DataProvider<LowercaseV1Marker>
+        + DataProvider<MathV1Marker>
+        + DataProvider<NoncharacterCodePointV1Marker>
+        + DataProvider<PatternSyntaxV1Marker>
+        + DataProvider<PatternWhiteSpaceV1Marker>
+        + DataProvider<QuotationMarkV1Marker>
+        + DataProvider<RadicalV1Marker>
+        + DataProvider<RegionalIndicatorV1Marker>
+        + DataProvider<SentenceTerminalV1Marker>
+        + DataProvider<SoftDottedV1Marker>
+        + DataProvider<TerminalPunctuationV1Marker>
+        + DataProvider<UnifiedIdeographV1Marker>
+        + DataProvider<UppercaseV1Marker>
+        + DataProvider<VariationSelectorV1Marker>
+        + DataProvider<WhiteSpaceV1Marker>
+        + DataProvider<XidContinueV1Marker>
+        + DataProvider<XidStartV1Marker>,
+{
+    use crate::runtime::UnicodeProperty;
+
+    let prop = if let Some(prop) = UnicodeProperty::parse_ecma262_name(name) {
+        prop
+    } else {
+        return Err(PropertiesError::UnexpectedPropertyName);
+    };
+    match prop {
+        UnicodeProperty::AsciiHexDigit => load_ascii_hex_digit(provider),
+        UnicodeProperty::Alphabetic => load_alphabetic(provider),
+        UnicodeProperty::BidiControl => load_bidi_control(provider),
+        UnicodeProperty::BidiMirrored => load_bidi_mirrored(provider),
+        UnicodeProperty::CaseIgnorable => load_case_ignorable(provider),
+        UnicodeProperty::Cased => load_cased(provider),
+        UnicodeProperty::ChangesWhenCasefolded => load_changes_when_casefolded(provider),
+        UnicodeProperty::ChangesWhenCasemapped => load_changes_when_casemapped(provider),
+        UnicodeProperty::ChangesWhenLowercased => load_changes_when_lowercased(provider),
+        UnicodeProperty::ChangesWhenNfkcCasefolded => load_changes_when_nfkc_casefolded(provider),
+        UnicodeProperty::ChangesWhenTitlecased => load_changes_when_titlecased(provider),
+        UnicodeProperty::ChangesWhenUppercased => load_changes_when_uppercased(provider),
+        UnicodeProperty::Dash => load_dash(provider),
+        UnicodeProperty::DefaultIgnorableCodePoint => load_default_ignorable_code_point(provider),
+        UnicodeProperty::Deprecated => load_deprecated(provider),
+        UnicodeProperty::Diacritic => load_diacritic(provider),
+        UnicodeProperty::Emoji => load_emoji(provider),
+        UnicodeProperty::EmojiComponent => load_emoji_component(provider),
+        UnicodeProperty::EmojiModifier => load_emoji_modifier(provider),
+        UnicodeProperty::EmojiModifierBase => load_emoji_modifier_base(provider),
+        UnicodeProperty::EmojiPresentation => load_emoji_presentation(provider),
+        UnicodeProperty::ExtendedPictographic => load_extended_pictographic(provider),
+        UnicodeProperty::Extender => load_extender(provider),
+        UnicodeProperty::GraphemeBase => load_grapheme_base(provider),
+        UnicodeProperty::GraphemeExtend => load_grapheme_extend(provider),
+        UnicodeProperty::HexDigit => load_hex_digit(provider),
+        UnicodeProperty::IdsBinaryOperator => load_ids_binary_operator(provider),
+        UnicodeProperty::IdsTrinaryOperator => load_ids_trinary_operator(provider),
+        UnicodeProperty::IdContinue => load_id_continue(provider),
+        UnicodeProperty::IdStart => load_id_start(provider),
+        UnicodeProperty::Ideographic => load_ideographic(provider),
+        UnicodeProperty::JoinControl => load_join_control(provider),
+        UnicodeProperty::LogicalOrderException => load_logical_order_exception(provider),
+        UnicodeProperty::Lowercase => load_lowercase(provider),
+        UnicodeProperty::Math => load_math(provider),
+        UnicodeProperty::NoncharacterCodePoint => load_noncharacter_code_point(provider),
+        UnicodeProperty::PatternSyntax => load_pattern_syntax(provider),
+        UnicodeProperty::PatternWhiteSpace => load_pattern_white_space(provider),
+        UnicodeProperty::QuotationMark => load_quotation_mark(provider),
+        UnicodeProperty::Radical => load_radical(provider),
+        UnicodeProperty::RegionalIndicator => load_regional_indicator(provider),
+        UnicodeProperty::SentenceTerminal => load_sentence_terminal(provider),
+        UnicodeProperty::SoftDotted => load_soft_dotted(provider),
+        UnicodeProperty::TerminalPunctuation => load_terminal_punctuation(provider),
+        UnicodeProperty::UnifiedIdeograph => load_unified_ideograph(provider),
+        UnicodeProperty::Uppercase => load_uppercase(provider),
+        UnicodeProperty::VariationSelector => load_variation_selector(provider),
+        UnicodeProperty::WhiteSpace => load_white_space(provider),
+        UnicodeProperty::XidContinue => load_xid_continue(provider),
+        UnicodeProperty::XidStart => load_xid_start(provider),
+        _ => Err(PropertiesError::UnexpectedPropertyName),
+    }
 }
 
 #[cfg(test)]
@@ -1623,9 +2020,8 @@ mod tests {
         use icu::properties::sets;
         use icu::properties::GeneralCategoryGroup;
 
-        let provider = icu_testdata::get_provider();
-        let digits = sets::get_for_general_category_group(&provider, GeneralCategoryGroup::Number)
-            .expect("The data should be valid");
+        let digits_data = sets::for_general_category_group(GeneralCategoryGroup::Number);
+        let digits = digits_data.as_borrowed();
 
         assert!(digits.contains('5'));
         assert!(digits.contains('\u{0665}')); // U+0665 ARABIC-INDIC DIGIT FIVE
@@ -1639,11 +2035,8 @@ mod tests {
         use icu::properties::maps;
         use icu::properties::Script;
 
-        let provider = icu_testdata::get_provider();
-        let payload = maps::get_script(&provider).expect("The data should be valid");
-        let data_struct = payload.get();
-        let script = &data_struct.code_point_trie;
-        let thai = script.get_set_for_value(Script::Thai);
+        let thai_data = maps::script().get_set_for_value(Script::Thai);
+        let thai = thai_data.as_borrowed();
 
         assert!(thai.contains('\u{0e01}')); // U+0E01 THAI CHARACTER KO KAI
         assert!(thai.contains('\u{0e50}')); // U+0E50 THAI DIGIT ZERO
@@ -1656,28 +2049,27 @@ mod tests {
     fn test_gc_groupings() {
         use icu::properties::{maps, sets};
         use icu::properties::{GeneralCategory, GeneralCategoryGroup};
-        use icu_uniset::UnicodeSetBuilder;
-
-        let provider = icu_testdata::get_provider();
+        use icu_collections::codepointinvlist::CodePointInversionListBuilder;
 
         let test_group = |category: GeneralCategoryGroup, subcategories: &[GeneralCategory]| {
-            let category_set = sets::get_for_general_category_group(&provider, category)
+            let category_set = sets::for_general_category_group(category);
+            let category_set = category_set
+                .as_code_point_inversion_list()
                 .expect("The data should be valid");
 
-            let gc_payload =
-                maps::get_general_category(&provider).expect("The data should be valid");
-            let data_struct = gc_payload.get();
-            let gc = &data_struct.code_point_trie;
-
-            let mut builder = UnicodeSetBuilder::new();
+            let mut builder = CodePointInversionListBuilder::new();
             for subcategory in subcategories {
-                builder.add_set(&gc.get_set_for_value(*subcategory));
+                let gc_set_data = &maps::general_category().get_set_for_value(*subcategory);
+                let gc_set = gc_set_data.as_borrowed();
+                for range in gc_set.iter_ranges() {
+                    builder.add_range_u32(&range);
+                }
             }
             let combined_set = builder.build();
-            println!("{:?} {:?}", category, subcategories);
+            println!("{category:?} {subcategories:?}");
             assert_eq!(
-                category_set.get_inversion_list(),
-                combined_set.get_inversion_list()
+                category_set.get_inversion_list_vec(),
+                combined_set.get_inversion_list_vec()
             );
         };
 
@@ -1753,15 +2145,13 @@ mod tests {
         use icu::properties::maps;
         use icu::properties::GeneralCategory;
 
-        let provider = icu_testdata::get_provider();
-        let gc_payload = maps::get_general_category(&provider).expect("The data should be valid");
-        let data_struct = gc_payload.get();
-        let gc = &data_struct.code_point_trie;
-        let surrogates = gc.get_set_for_value(GeneralCategory::Surrogate);
+        let surrogates_data =
+            maps::general_category().get_set_for_value(GeneralCategory::Surrogate);
+        let surrogates = surrogates_data.as_borrowed();
 
-        assert!(surrogates.contains_u32(0xd800));
-        assert!(surrogates.contains_u32(0xd900));
-        assert!(surrogates.contains_u32(0xdfff));
+        assert!(surrogates.contains32(0xd800));
+        assert!(surrogates.contains32(0xd900));
+        assert!(surrogates.contains32(0xdfff));
 
         assert!(!surrogates.contains('A'));
     }

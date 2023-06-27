@@ -13,21 +13,32 @@ use std::borrow::Cow;
 ///
 /// let input = "{0}, {1}";
 ///
-/// let mut parser = Parser::new(input, ParserOptions {
-///     allow_raw_letters: false
-/// });
+/// let mut parser = Parser::new(
+///     input,
+///     ParserOptions {
+///         allow_raw_letters: false,
+///     },
+/// );
 ///
 /// let mut result = vec![];
 ///
-/// while let Some(element) = parser.try_next().expect("Failed to advance iterator") {
+/// while let Some(element) =
+///     parser.try_next().expect("Failed to advance iterator")
+/// {
 ///     result.push(element);
 /// }
 ///
-/// assert_eq!(result, &[
-///     PatternToken::Placeholder(0),
-///     PatternToken::Literal { content: ", ".into(), quoted: false },
-///     PatternToken::Placeholder(1),
-/// ]);
+/// assert_eq!(
+///     result,
+///     &[
+///         PatternToken::Placeholder(0),
+///         PatternToken::Literal {
+///             content: ", ".into(),
+///             quoted: false
+///         },
+///         PatternToken::Placeholder(1),
+///     ]
+/// );
 /// ```
 ///
 /// # Type parameters

@@ -12,17 +12,22 @@ pub mod runtime;
 use crate::fields;
 pub use error::PatternError;
 pub use hour_cycle::CoarseHourCycle;
-use icu_provider::{yoke, zerofrom};
+use icu_provider::prelude::*;
 pub use item::{GenericPatternItem, PatternItem};
 
 /// The granularity of time represented in a pattern item.
-/// Ordered from least granular to most granular for comparsion.
+/// Ordered from least granular to most granular for comparison.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, yoke::Yokeable, zerofrom::ZeroFrom,
 )]
-#[cfg_attr(feature = "datagen", derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "datagen",
+    derive(serde::Serialize, databake::Bake),
+    databake(path = icu_datetime::pattern),
+)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
-pub(crate) enum TimeGranularity {
+#[non_exhaustive]
+pub enum TimeGranularity {
     None,
     Hours,
     Minutes,

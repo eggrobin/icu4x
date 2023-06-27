@@ -2,41 +2,45 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
+//! A formatter specifically for the time zone.
+
+use crate::provider::time_zones::TimeZoneBcp47Id;
 use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::String;
 use core::fmt;
 use smallvec::SmallVec;
+use tinystr::tinystr;
 
 use crate::{
-    date::TimeZoneInput,
-    error::DateTimeFormatError,
+    error::DateTimeError,
     fields::{FieldSymbol, TimeZone},
     format::time_zone::FormattedTimeZone,
+    input::TimeZoneInput,
     pattern::{PatternError, PatternItem},
     provider::{self, calendar::patterns::PatternPluralsFromPatternsV1Marker},
 };
-use icu_locid::{LanguageIdentifier, Locale};
 use icu_provider::prelude::*;
 use writeable::Writeable;
 
+#[cfg(doc)]
+use crate::ZonedDateTimeFormatter;
+
 /// Loads a resource into its destination if the destination has not already been filled.
-fn load_resource<D, L, P>(
-    locale: &L,
+fn load<D, P>(
+    locale: &DataLocale,
     destination: &mut Option<DataPayload<D>>,
     provider: &P,
-) -> Result<(), DateTimeFormatError>
+) -> Result<(), DateTimeError>
 where
-    D: ResourceMarker,
-    L: Clone + Into<LanguageIdentifier>,
-    P: ResourceProvider<D> + ?Sized,
+    D: KeyedDataMarker,
+    P: DataProvider<D> + ?Sized,
 {
-    let langid: LanguageIdentifier = locale.clone().into();
     if destination.is_none() {
         *destination = Some(
             provider
-                .load_resource(&DataRequest {
-                    options: langid.into(),
+                .load(DataRequest {
+                    locale,
                     metadata: Default::default(),
                 })?
                 .take_payload()?,
@@ -45,94 +49,151 @@ where
     Ok(())
 }
 
-/// [`TimeZoneFormat`] uses data from the [data provider], the selected [`Locale`], and the provided
-/// [`TimeZoneFormatConfig`] to collect all data necessary to format time zones into that locale.
+/// [`TimeZoneFormatter`] is available for users who need to separately control the formatting of time
+/// zones.  Note: most users might prefer [`ZonedDateTimeFormatter`], which includes default time zone
+/// formatting according to the calendar.
+///
+/// [`TimeZoneFormatter`] uses data from the [data provider] and the selected locale
+/// to format time zones into that locale.
 ///
 /// The various time-zone configs specified in UTS-35 require different sets of data for
-/// formatting. As such,[`TimeZoneFormat`] will pull in only the resources needed to format the
+/// formatting. As such,[`TimeZoneFormatter`] will pull in only the resources needed to format the
 /// config that it is given upon construction.
 ///
 /// For that reason, one should think of the process of formatting a time zone in two steps:
-/// first, a computationally heavy construction of [`TimeZoneFormat`], and then fast formatting
+/// first, a computationally heavy construction of [`TimeZoneFormatter`], and then fast formatting
 /// of the time-zone data using the instance.
+///
+/// [`CustomTimeZone`] can be used as formatting input.
 ///
 /// # Examples
 ///
+/// Here, we configure the [`TimeZoneFormatter`] to first look for time zone formatting symbol
+/// data for `generic_non_location_short`, and if it does not exist, to subsequently check
+/// for `generic_non_location_long` data.
+///
 /// ```
-/// use icu_locid::locale;
-/// use icu_datetime::{TimeZoneFormat, TimeZoneFormatConfig, TimeZoneFormatOptions};
-/// use icu_datetime::date::GmtOffset;
-/// use icu_datetime::mock::time_zone::MockTimeZone;
-/// use icu_provider::inv::InvariantDataProvider;
+/// use icu::calendar::DateTime;
+/// use icu::timezone::{CustomTimeZone, MetazoneCalculator};
+/// use icu::datetime::{DateTimeError, time_zone::TimeZoneFormatter};
+/// use icu::locid::locale;
+/// use tinystr::tinystr;
+/// use writeable::assert_writeable_eq;
 ///
-/// let provider = InvariantDataProvider;
+/// // Set up the time zone. Note: the inputs here are
+/// //   1. The GMT offset
+/// //   2. The BCP-47 time zone ID
+/// //   3. A datetime (for metazone resolution)
+/// //   4. Note: we do not need the zone variant because of `load_generic_*()`
 ///
-/// let tzf = TimeZoneFormat::try_from_config(locale!("en"), TimeZoneFormatConfig::GenericNonLocationLong, &provider, &TimeZoneFormatOptions::default())
-///     .expect("Failed to create TimeZoneFormat");
+/// // Set up the Metazone calculator and the DateTime to use in calculation
+/// let mzc = MetazoneCalculator::try_new_unstable(&icu_testdata::unstable())
+///     .unwrap();
+/// let datetime = DateTime::try_new_iso_datetime(2022, 8, 29, 0, 0, 0)
+///     .unwrap();
 ///
-/// let time_zone = MockTimeZone::new(
-///        GmtOffset::default(),
-///        None,
-///        None,
-///        None,
+/// // Set up the formatter
+/// let mut tzf = TimeZoneFormatter::try_new_unstable(
+///     &icu_testdata::unstable(),
+///     &locale!("en").into(),
+///     Default::default(),
+/// )
+/// .unwrap();
+/// tzf.load_generic_non_location_short(&icu_testdata::unstable())?
+///     .load_generic_non_location_long(&icu_testdata::unstable())?;
+///
+/// // "uschi" - has metazone symbol data for generic_non_location_short
+/// let mut time_zone = "-0600".parse::<CustomTimeZone>().unwrap();
+/// time_zone.time_zone_id = Some(tinystr!(8, "uschi").into());
+/// time_zone.maybe_calculate_metazone(&mzc, &datetime);
+/// assert_writeable_eq!(
+///     tzf.format(&time_zone),
+///     "CT"
 /// );
 ///
-/// let value = tzf.format_to_string(&time_zone);
+/// // "ushnl" - has time zone override symbol data for generic_non_location_short
+/// let mut time_zone = "-1000".parse::<CustomTimeZone>().unwrap();
+/// time_zone.time_zone_id = Some(tinystr!(8, "ushnl").into());
+/// time_zone.maybe_calculate_metazone(&mzc, &datetime);
+/// assert_writeable_eq!(
+///     tzf.format(&time_zone),
+///     "HST"
+/// );
+///
+/// // "frpar" - does not have symbol data for generic_non_location_short, so falls
+/// //           back to generic_non_location_long
+/// let mut time_zone = "+0100".parse::<CustomTimeZone>().unwrap();
+/// time_zone.time_zone_id = Some(tinystr!(8, "frpar").into());
+/// time_zone.maybe_calculate_metazone(&mzc, &datetime);
+/// assert_writeable_eq!(
+///     tzf.format(&time_zone),
+///     "Central European Time"
+/// );
+///
+/// // GMT with offset - used when metazone is not available
+/// let mut time_zone = "+0530".parse::<CustomTimeZone>().unwrap();
+/// assert_writeable_eq!(
+///     tzf.format(&time_zone),
+///     "GMT+05:30"
+/// );
+///
+/// # Ok::<(), DateTimeError>(())
 /// ```
 ///
 /// [data provider]: icu_provider
-pub struct TimeZoneFormat {
-    pub(super) locale: Locale,
+/// [`CustomTimeZone`]: icu_timezone::CustomTimeZone
+#[derive(Debug)]
+pub struct TimeZoneFormatter {
+    pub(super) locale: DataLocale,
     pub(super) data_payloads: TimeZoneDataPayloads,
-    pub(super) format_units: SmallVec<[TimeZoneFormatUnit; 3]>,
-    pub(super) fallback_unit: TimeZoneFormatUnit,
+    pub(super) format_units: SmallVec<[TimeZoneFormatterUnit; 3]>,
+    pub(super) fallback_unit: TimeZoneFormatterUnit,
 }
 
-/// A container contains all data payloads for TimeZone.
-pub struct TimeZoneDataPayloads {
+/// A container contains all data payloads for CustomTimeZone.
+#[derive(Debug)]
+pub(super) struct TimeZoneDataPayloads {
     /// The data that contains meta information about how to display content.
     pub(super) zone_formats: DataPayload<provider::time_zones::TimeZoneFormatsV1Marker>,
     /// The exemplar cities for time zones.
     pub(super) exemplar_cities: Option<DataPayload<provider::time_zones::ExemplarCitiesV1Marker>>,
     /// The generic long metazone names, e.g. Pacific Time
     pub(super) mz_generic_long:
-        Option<DataPayload<provider::time_zones::MetaZoneGenericNamesLongV1Marker>>,
+        Option<DataPayload<provider::time_zones::MetazoneGenericNamesLongV1Marker>>,
     /// The generic short metazone names, e.g. PT
     pub(super) mz_generic_short:
-        Option<DataPayload<provider::time_zones::MetaZoneGenericNamesShortV1Marker>>,
+        Option<DataPayload<provider::time_zones::MetazoneGenericNamesShortV1Marker>>,
     /// The specific long metazone names, e.g. Pacific Daylight Time
     pub(super) mz_specific_long:
-        Option<DataPayload<provider::time_zones::MetaZoneSpecificNamesLongV1Marker>>,
+        Option<DataPayload<provider::time_zones::MetazoneSpecificNamesLongV1Marker>>,
     /// The specific short metazone names, e.g. Pacific Daylight Time
     pub(super) mz_specific_short:
-        Option<DataPayload<provider::time_zones::MetaZoneSpecificNamesShortV1Marker>>,
+        Option<DataPayload<provider::time_zones::MetazoneSpecificNamesShortV1Marker>>,
 }
 
-impl TimeZoneFormat {
+impl TimeZoneFormatter {
     /// Constructor that selectively loads data based on what is required to
     /// format the given pattern into the given locale.
-    pub(super) fn try_new<L, ZP>(
-        locale: L,
-        patterns: DataPayload<PatternPluralsFromPatternsV1Marker>,
+    pub(super) fn try_new_for_pattern<ZP>(
         zone_provider: &ZP,
-        options: &TimeZoneFormatOptions,
-    ) -> Result<Self, DateTimeFormatError>
+        locale: &DataLocale,
+        patterns: DataPayload<PatternPluralsFromPatternsV1Marker>,
+        options: &TimeZoneFormatterOptions,
+    ) -> Result<Self, DateTimeError>
     where
-        L: Into<Locale>,
-        ZP: ResourceProvider<provider::time_zones::TimeZoneFormatsV1Marker>
-            + ResourceProvider<provider::time_zones::ExemplarCitiesV1Marker>
-            + ResourceProvider<provider::time_zones::MetaZoneGenericNamesLongV1Marker>
-            + ResourceProvider<provider::time_zones::MetaZoneGenericNamesShortV1Marker>
-            + ResourceProvider<provider::time_zones::MetaZoneSpecificNamesLongV1Marker>
-            + ResourceProvider<provider::time_zones::MetaZoneSpecificNamesShortV1Marker>
+        ZP: DataProvider<provider::time_zones::TimeZoneFormatsV1Marker>
+            + DataProvider<provider::time_zones::ExemplarCitiesV1Marker>
+            + DataProvider<provider::time_zones::MetazoneGenericNamesLongV1Marker>
+            + DataProvider<provider::time_zones::MetazoneGenericNamesShortV1Marker>
+            + DataProvider<provider::time_zones::MetazoneSpecificNamesLongV1Marker>
+            + DataProvider<provider::time_zones::MetazoneSpecificNamesShortV1Marker>
             + ?Sized,
     {
-        let locale = locale.into();
-        let format_units = SmallVec::<[TimeZoneFormatUnit; 3]>::new();
+        let format_units = SmallVec::<[TimeZoneFormatterUnit; 3]>::new();
         let data_payloads = TimeZoneDataPayloads {
             zone_formats: zone_provider
-                .load_resource(&DataRequest {
-                    options: ResourceOptions::from(&locale),
+                .load(DataRequest {
+                    locale,
                     metadata: Default::default(),
                 })?
                 .take_payload()?,
@@ -157,11 +218,12 @@ impl TimeZoneFormat {
                 _ => None,
             });
 
-        let mut tz_format: TimeZoneFormat = Self {
+        let mut tz_format: TimeZoneFormatter = Self {
             data_payloads,
-            locale,
+            // TODO(#2237): Determine whether we need to save the locale in the formatter
+            locale: locale.clone(),
             format_units,
-            fallback_unit: TimeZoneFormat::get_fallback_unit(options.fallback_format),
+            fallback_unit: TimeZoneFormatter::get_fallback_unit(options.fallback_format),
         };
         let mut prev_length = None;
         let mut prev_symbol = None;
@@ -171,9 +233,7 @@ impl TimeZoneFormat {
                 prev_symbol = Some(symbol);
             } else if prev_length != Some(length) && prev_symbol != Some(symbol) {
                 // We don't support the pattern that has multiple different timezone fields of different types.
-                return Err(DateTimeFormatError::Pattern(
-                    PatternError::UnsupportedPluralPivot,
-                ));
+                return Err(DateTimeError::Pattern(PatternError::UnsupportedPluralPivot));
             }
 
             match symbol {
@@ -185,9 +245,9 @@ impl TimeZoneFormat {
                         tz_format.load_specific_non_location_long(zone_provider)?;
                     }
                     _ => {
-                        return Err(DateTimeFormatError::Pattern(
-                            PatternError::FieldLengthInvalid(FieldSymbol::TimeZone(symbol)),
-                        ))
+                        return Err(DateTimeError::Pattern(PatternError::FieldLengthInvalid(
+                            FieldSymbol::TimeZone(symbol),
+                        )))
                     }
                 },
                 TimeZone::LowerV => match length {
@@ -198,9 +258,9 @@ impl TimeZoneFormat {
                         tz_format.load_generic_non_location_long(zone_provider)?;
                     }
                     _ => {
-                        return Err(DateTimeFormatError::Pattern(
-                            PatternError::FieldLengthInvalid(FieldSymbol::TimeZone(symbol)),
-                        ))
+                        return Err(DateTimeError::Pattern(PatternError::FieldLengthInvalid(
+                            FieldSymbol::TimeZone(symbol),
+                        )))
                     }
                 },
                 TimeZone::UpperV => match length {
@@ -213,9 +273,9 @@ impl TimeZoneFormat {
                         tz_format.load_generic_location_format(zone_provider)?;
                     }
                     _ => {
-                        return Err(DateTimeFormatError::Pattern(
-                            PatternError::FieldLengthInvalid(FieldSymbol::TimeZone(symbol)),
-                        ))
+                        return Err(DateTimeError::Pattern(PatternError::FieldLengthInvalid(
+                            FieldSymbol::TimeZone(symbol),
+                        )))
                     }
                 },
                 TimeZone::UpperZ => match length {
@@ -237,9 +297,9 @@ impl TimeZoneFormat {
                         )?;
                     }
                     _ => {
-                        return Err(DateTimeFormatError::Pattern(
-                            PatternError::FieldLengthInvalid(FieldSymbol::TimeZone(symbol)),
-                        ))
+                        return Err(DateTimeError::Pattern(PatternError::FieldLengthInvalid(
+                            FieldSymbol::TimeZone(symbol),
+                        )))
                     }
                 },
                 TimeZone::LowerX => match length {
@@ -279,9 +339,9 @@ impl TimeZoneFormat {
                         )?;
                     }
                     _ => {
-                        return Err(DateTimeFormatError::Pattern(
-                            PatternError::FieldLengthInvalid(FieldSymbol::TimeZone(symbol)),
-                        ))
+                        return Err(DateTimeError::Pattern(PatternError::FieldLengthInvalid(
+                            FieldSymbol::TimeZone(symbol),
+                        )))
                     }
                 },
                 TimeZone::UpperX => match length {
@@ -321,9 +381,9 @@ impl TimeZoneFormat {
                         )?;
                     }
                     _ => {
-                        return Err(DateTimeFormatError::Pattern(
-                            PatternError::FieldLengthInvalid(FieldSymbol::TimeZone(symbol)),
-                        ))
+                        return Err(DateTimeError::Pattern(PatternError::FieldLengthInvalid(
+                            FieldSymbol::TimeZone(symbol),
+                        )))
                     }
                 },
                 TimeZone::UpperO => match length {
@@ -331,9 +391,9 @@ impl TimeZoneFormat {
                         tz_format.load_localized_gmt_format()?;
                     }
                     _ => {
-                        return Err(DateTimeFormatError::Pattern(
-                            PatternError::FieldLengthInvalid(FieldSymbol::TimeZone(symbol)),
-                        ))
+                        return Err(DateTimeError::Pattern(PatternError::FieldLengthInvalid(
+                            FieldSymbol::TimeZone(symbol),
+                        )))
                     }
                 },
             }
@@ -341,45 +401,51 @@ impl TimeZoneFormat {
         Ok(tz_format)
     }
 
-    /// Constructor that selectively loads data based on what is required to
-    /// format the given config into the given locale.
+    /// Creates a new [`TimeZoneFormatter`] with a GMT or ISO format.
+    ///
+    /// To enable other time zone styles, use one of the `load` methods.
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    /// <div class="stab unstable">
+    /// ⚠️ The bounds on this function may change over time, including in SemVer minor releases.
+    /// </div>
     ///
     /// # Examples
     ///
+    /// Default format is Localized GMT:
+    ///
     /// ```
-    /// use icu_locid::locale;
-    /// use icu_datetime::{TimeZoneFormat, TimeZoneFormatConfig, TimeZoneFormatOptions};
-    /// use icu_datetime::mock::time_zone::MockTimeZone;
-    /// use icu_provider::inv::InvariantDataProvider;
+    /// use icu::datetime::time_zone::{
+    ///     TimeZoneFormatter, TimeZoneFormatterOptions,
+    /// };
+    /// use icu::locid::locale;
+    /// use icu::timezone::CustomTimeZone;
+    /// use writeable::assert_writeable_eq;
     ///
-    /// let provider = InvariantDataProvider;
+    /// let tzf = TimeZoneFormatter::try_new_unstable(
+    ///     &icu_testdata::unstable(),
+    ///     &locale!("es").into(),
+    ///     TimeZoneFormatterOptions::default(),
+    /// )
+    /// .unwrap();
     ///
-    /// let tzf = TimeZoneFormat::try_from_config(locale!("en"), TimeZoneFormatConfig::LocalizedGMT, &provider, &TimeZoneFormatOptions::default());
+    /// let time_zone = "-0700".parse::<CustomTimeZone>().unwrap();
     ///
-    /// assert!(tzf.is_ok());
+    /// assert_writeable_eq!(tzf.format(&time_zone), "GMT-07:00");
     /// ```
-    pub fn try_from_config<L, ZP>(
-        locale: L,
-        config: TimeZoneFormatConfig,
-        zone_provider: &ZP,
-        options: &TimeZoneFormatOptions,
-    ) -> Result<Self, DateTimeFormatError>
+    pub fn try_new_unstable<P>(
+        provider: &P,
+        locale: &DataLocale,
+        options: TimeZoneFormatterOptions,
+    ) -> Result<Self, DateTimeError>
     where
-        L: Into<Locale>,
-        ZP: ResourceProvider<provider::time_zones::TimeZoneFormatsV1Marker>
-            + ResourceProvider<provider::time_zones::ExemplarCitiesV1Marker>
-            + ResourceProvider<provider::time_zones::MetaZoneGenericNamesLongV1Marker>
-            + ResourceProvider<provider::time_zones::MetaZoneGenericNamesShortV1Marker>
-            + ResourceProvider<provider::time_zones::MetaZoneSpecificNamesLongV1Marker>
-            + ResourceProvider<provider::time_zones::MetaZoneSpecificNamesShortV1Marker>
-            + ?Sized,
+        P: DataProvider<provider::time_zones::TimeZoneFormatsV1Marker> + ?Sized,
     {
-        let locale = locale.into();
-        let format_units = SmallVec::<[TimeZoneFormatUnit; 3]>::new();
+        let format_units = SmallVec::<[TimeZoneFormatterUnit; 3]>::new();
         let data_payloads = TimeZoneDataPayloads {
-            zone_formats: zone_provider
-                .load_resource(&DataRequest {
-                    options: ResourceOptions::from(&locale),
+            zone_formats: provider
+                .load(DataRequest {
+                    locale,
                     metadata: Default::default(),
                 })?
                 .take_payload()?,
@@ -389,57 +455,37 @@ impl TimeZoneFormat {
             mz_specific_long: None,
             mz_specific_short: None,
         };
-
-        let mut tz_format: TimeZoneFormat = Self {
+        Ok(Self {
             data_payloads,
-            locale,
+            locale: locale.clone(),
             format_units,
-            fallback_unit: TimeZoneFormat::get_fallback_unit(options.fallback_format),
-        };
-
-        match config {
-            TimeZoneFormatConfig::GenericNonLocationLong => {
-                tz_format.load_generic_non_location_long(zone_provider)?;
-            }
-            TimeZoneFormatConfig::GenericNonLocationShort => {
-                tz_format.load_generic_non_location_short(zone_provider)?;
-            }
-            TimeZoneFormatConfig::GenericLocation => {
-                tz_format.load_generic_location_format(zone_provider)?;
-            }
-            TimeZoneFormatConfig::SpecificNonLocationLong => {
-                tz_format.load_specific_non_location_long(zone_provider)?;
-            }
-            TimeZoneFormatConfig::SpecificNonLocationShort => {
-                tz_format.load_specific_non_location_short(zone_provider)?;
-            }
-            TimeZoneFormatConfig::LocalizedGMT => {
-                tz_format.load_localized_gmt_format()?;
-            }
-            TimeZoneFormatConfig::Iso8601(format, minutes, seconds) => {
-                tz_format.load_iso_8601_format(format, minutes, seconds)?;
-            }
-        }
-        Ok(tz_format)
+            fallback_unit: TimeZoneFormatter::get_fallback_unit(options.fallback_format),
+        })
     }
+
+    icu_provider::gen_any_buffer_constructors!(
+        locale: include,
+        options: TimeZoneFormatterOptions,
+        error: DateTimeError
+    );
 
     /// Load generic non location long format for timezone. For example, Pacific Time.
     pub fn load_generic_non_location_long<ZP>(
         &mut self,
         zone_provider: &ZP,
-    ) -> Result<&mut TimeZoneFormat, DateTimeFormatError>
+    ) -> Result<&mut TimeZoneFormatter, DateTimeError>
     where
-        ZP: ResourceProvider<provider::time_zones::MetaZoneGenericNamesLongV1Marker> + ?Sized,
+        ZP: DataProvider<provider::time_zones::MetazoneGenericNamesLongV1Marker> + ?Sized,
     {
-        if self.data_payloads.mz_generic_long == None {
-            load_resource(
+        if self.data_payloads.mz_generic_long.is_none() {
+            load(
                 &self.locale,
                 &mut self.data_payloads.mz_generic_long,
                 zone_provider,
             )?;
         }
         self.format_units
-            .push(TimeZoneFormatUnit::GenericNonLocationLong(
+            .push(TimeZoneFormatterUnit::GenericNonLocationLong(
                 GenericNonLocationLongFormat {},
             ));
         Ok(self)
@@ -449,19 +495,19 @@ impl TimeZoneFormat {
     pub fn load_generic_non_location_short<ZP>(
         &mut self,
         zone_provider: &ZP,
-    ) -> Result<&mut TimeZoneFormat, DateTimeFormatError>
+    ) -> Result<&mut TimeZoneFormatter, DateTimeError>
     where
-        ZP: ResourceProvider<provider::time_zones::MetaZoneGenericNamesShortV1Marker> + ?Sized,
+        ZP: DataProvider<provider::time_zones::MetazoneGenericNamesShortV1Marker> + ?Sized,
     {
-        if self.data_payloads.mz_generic_short == None {
-            load_resource(
+        if self.data_payloads.mz_generic_short.is_none() {
+            load(
                 &self.locale,
                 &mut self.data_payloads.mz_generic_short,
                 zone_provider,
             )?;
         }
         self.format_units
-            .push(TimeZoneFormatUnit::GenericNonLocationShort(
+            .push(TimeZoneFormatterUnit::GenericNonLocationShort(
                 GenericNonLocationShortFormat {},
             ));
         Ok(self)
@@ -471,19 +517,19 @@ impl TimeZoneFormat {
     pub fn load_specific_non_location_long<ZP>(
         &mut self,
         zone_provider: &ZP,
-    ) -> Result<&mut TimeZoneFormat, DateTimeFormatError>
+    ) -> Result<&mut TimeZoneFormatter, DateTimeError>
     where
-        ZP: ResourceProvider<provider::time_zones::MetaZoneSpecificNamesLongV1Marker> + ?Sized,
+        ZP: DataProvider<provider::time_zones::MetazoneSpecificNamesLongV1Marker> + ?Sized,
     {
-        if self.data_payloads.mz_specific_long == None {
-            load_resource(
+        if self.data_payloads.mz_specific_long.is_none() {
+            load(
                 &self.locale,
                 &mut self.data_payloads.mz_specific_long,
                 zone_provider,
             )?;
         }
         self.format_units
-            .push(TimeZoneFormatUnit::SpecificNonLocationLong(
+            .push(TimeZoneFormatterUnit::SpecificNonLocationLong(
                 SpecificNonLocationLongFormat {},
             ));
         Ok(self)
@@ -493,19 +539,19 @@ impl TimeZoneFormat {
     pub fn load_specific_non_location_short<ZP>(
         &mut self,
         zone_provider: &ZP,
-    ) -> Result<&mut TimeZoneFormat, DateTimeFormatError>
+    ) -> Result<&mut TimeZoneFormatter, DateTimeError>
     where
-        ZP: ResourceProvider<provider::time_zones::MetaZoneSpecificNamesShortV1Marker> + ?Sized,
+        ZP: DataProvider<provider::time_zones::MetazoneSpecificNamesShortV1Marker> + ?Sized,
     {
-        if self.data_payloads.mz_specific_short == None {
-            load_resource(
+        if self.data_payloads.mz_specific_short.is_none() {
+            load(
                 &self.locale,
                 &mut self.data_payloads.mz_specific_short,
                 zone_provider,
             )?;
         }
         self.format_units
-            .push(TimeZoneFormatUnit::SpecificNonLocationShort(
+            .push(TimeZoneFormatterUnit::SpecificNonLocationShort(
                 SpecificNonLocationShortFormat {},
             ));
         Ok(self)
@@ -515,20 +561,21 @@ impl TimeZoneFormat {
     pub fn load_generic_location_format<ZP>(
         &mut self,
         zone_provider: &ZP,
-    ) -> Result<&mut TimeZoneFormat, DateTimeFormatError>
+    ) -> Result<&mut TimeZoneFormatter, DateTimeError>
     where
-        ZP: ResourceProvider<provider::time_zones::ExemplarCitiesV1Marker> + ?Sized,
+        ZP: DataProvider<provider::time_zones::ExemplarCitiesV1Marker> + ?Sized,
     {
-        if self.data_payloads.exemplar_cities == None {
-            load_resource(
+        if self.data_payloads.exemplar_cities.is_none() {
+            load(
                 &self.locale,
                 &mut self.data_payloads.exemplar_cities,
                 zone_provider,
             )?;
         }
-        self.format_units.push(TimeZoneFormatUnit::GenericLocation(
-            GenericLocationFormat {},
-        ));
+        self.format_units
+            .push(TimeZoneFormatterUnit::GenericLocation(
+                GenericLocationFormat {},
+            ));
         Ok(self)
     }
 
@@ -536,28 +583,26 @@ impl TimeZoneFormat {
     fn load_exemplar_city_format<ZP>(
         &mut self,
         zone_provider: &ZP,
-    ) -> Result<&mut TimeZoneFormat, DateTimeFormatError>
+    ) -> Result<&mut TimeZoneFormatter, DateTimeError>
     where
-        ZP: ResourceProvider<provider::time_zones::ExemplarCitiesV1Marker> + ?Sized,
+        ZP: DataProvider<provider::time_zones::ExemplarCitiesV1Marker> + ?Sized,
     {
-        if self.data_payloads.exemplar_cities == None {
-            load_resource(
+        if self.data_payloads.exemplar_cities.is_none() {
+            load(
                 &self.locale,
                 &mut self.data_payloads.exemplar_cities,
                 zone_provider,
             )?;
         }
         self.format_units
-            .push(TimeZoneFormatUnit::ExemplarCity(ExemplarCityFormat {}));
+            .push(TimeZoneFormatterUnit::ExemplarCity(ExemplarCityFormat {}));
         Ok(self)
     }
 
     /// Load localized GMT format for timezone. For example, GMT-07:00.
-    pub fn load_localized_gmt_format(
-        &mut self,
-    ) -> Result<&mut TimeZoneFormat, DateTimeFormatError> {
+    pub fn load_localized_gmt_format(&mut self) -> Result<&mut TimeZoneFormatter, DateTimeError> {
         self.format_units
-            .push(TimeZoneFormatUnit::LocalizedGmt(LocalizedGmtFormat {}));
+            .push(TimeZoneFormatterUnit::LocalizedGmt(LocalizedGmtFormat {}));
         Ok(self)
     }
 
@@ -567,9 +612,9 @@ impl TimeZoneFormat {
         format: IsoFormat,
         minutes: IsoMinutes,
         seconds: IsoSeconds,
-    ) -> Result<&mut TimeZoneFormat, DateTimeFormatError> {
+    ) -> Result<&mut TimeZoneFormatter, DateTimeError> {
         self.format_units
-            .push(TimeZoneFormatUnit::Iso8601(Iso8601Format {
+            .push(TimeZoneFormatterUnit::Iso8601(Iso8601Format {
                 format,
                 minutes,
                 seconds,
@@ -579,11 +624,13 @@ impl TimeZoneFormat {
 
     /// Load a fallback format for timezone. The fallback format will be executed if there are no
     /// matching format results.
-    pub(super) fn get_fallback_unit(fallback_format: FallbackFormat) -> TimeZoneFormatUnit {
+    pub(super) fn get_fallback_unit(fallback_format: FallbackFormat) -> TimeZoneFormatterUnit {
         match fallback_format {
-            FallbackFormat::LocalizedGmt => TimeZoneFormatUnit::LocalizedGmt(LocalizedGmtFormat {}),
+            FallbackFormat::LocalizedGmt => {
+                TimeZoneFormatterUnit::LocalizedGmt(LocalizedGmtFormat {})
+            }
             FallbackFormat::Iso8601(format, minutes, seconds) => {
-                TimeZoneFormatUnit::Iso8601(Iso8601Format {
+                TimeZoneFormatterUnit::Iso8601(Iso8601Format {
                     format,
                     minutes,
                     seconds,
@@ -598,25 +645,23 @@ impl TimeZoneFormat {
     /// # Examples
     ///
     /// ```
-    /// use icu_locid::locale;
-    /// use icu_datetime::{TimeZoneFormat, TimeZoneFormatConfig, TimeZoneFormatOptions};
-    /// use icu_datetime::date::GmtOffset;
-    /// use icu_datetime::mock::time_zone::MockTimeZone;
-    /// use icu_provider::inv::InvariantDataProvider;
+    /// use icu::datetime::time_zone::{
+    ///     TimeZoneFormatter, TimeZoneFormatterOptions,
+    /// };
+    /// use icu::locid::locale;
+    /// use icu::timezone::CustomTimeZone;
+    /// use writeable::assert_writeable_eq;
     ///
-    /// let provider = InvariantDataProvider;
+    /// let tzf = TimeZoneFormatter::try_new_unstable(
+    ///     &icu_testdata::unstable(),
+    ///     &locale!("en").into(),
+    ///     TimeZoneFormatterOptions::default(),
+    /// )
+    /// .expect("Failed to create TimeZoneFormatter");
     ///
-    /// let tzf = TimeZoneFormat::try_from_config(locale!("en"), TimeZoneFormatConfig::LocalizedGMT, &provider, &TimeZoneFormatOptions::default())
-    ///     .expect("Failed to create TimeZoneFormat");
+    /// let time_zone = CustomTimeZone::utc();
     ///
-    /// let time_zone = MockTimeZone::new(
-    ///        GmtOffset::default(),
-    ///        None,
-    ///        None,
-    ///        None,
-    /// );
-    ///
-    /// let _ = tzf.format(&time_zone);
+    /// assert_writeable_eq!(tzf.format(&time_zone), "GMT");
     /// ```
     pub fn format<'l, T>(&'l self, value: &'l T) -> FormattedTimeZone<'l, T>
     where
@@ -628,115 +673,64 @@ impl TimeZoneFormat {
         }
     }
 
-    /// Takes a mutable reference to anything that implements the [`Write`](std::fmt::Write)
-    /// trait and a [`TimeZoneInput`] implementer that populates the buffer with a formatted value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use icu_locid::locale;
-    /// use icu_datetime::{TimeZoneFormat, TimeZoneFormatConfig, TimeZoneFormatOptions};
-    /// use icu_datetime::date::GmtOffset;
-    /// use icu_datetime::mock::time_zone::MockTimeZone;
-    /// use icu_provider::inv::InvariantDataProvider;
-    ///
-    /// let provider = InvariantDataProvider;
-    ///
-    /// let tzf = TimeZoneFormat::try_from_config(locale!("en"), TimeZoneFormatConfig::LocalizedGMT, &provider, &TimeZoneFormatOptions::default())
-    ///     .expect("Failed to create TimeZoneFormat");
-    ///
-    /// let time_zone = MockTimeZone::new(
-    ///        GmtOffset::default(),
-    ///        None,
-    ///        None,
-    ///        None,
-    /// );
-    ///
-    /// let mut buffer = String::new();
-    /// tzf.format_to_write(&mut buffer, &time_zone)
-    ///     .expect("Failed to write to a buffer.");
-    ///
-    /// let _ = format!("Time Zone: {}", buffer);
-    /// ```
-    pub fn format_to_write(
-        &self,
-        w: &mut impl core::fmt::Write,
-        value: &impl TimeZoneInput,
-    ) -> fmt::Result {
-        self.format(value).write_to(w)
-    }
-
     /// Takes a [`TimeZoneInput`] implementer and returns a string with the formatted value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use icu_locid::locale;
-    /// use icu_datetime::{TimeZoneFormat, TimeZoneFormatConfig, TimeZoneFormatOptions};
-    /// use icu_datetime::date::GmtOffset;
-    /// use icu_datetime::mock::time_zone::MockTimeZone;
-    /// use icu_provider::inv::InvariantDataProvider;
-    ///
-    /// let provider = InvariantDataProvider;
-    ///
-    /// let tzf = TimeZoneFormat::try_from_config(locale!("en"), TimeZoneFormatConfig::LocalizedGMT, &provider, &TimeZoneFormatOptions::default())
-    ///     .expect("Failed to create TimeZoneFormat");
-    ///
-    /// let time_zone = MockTimeZone::new(
-    ///        GmtOffset::default(),
-    ///        None,
-    ///        None,
-    ///        None,
-    /// );
-    ///
-    /// let _ = tzf.format_to_string(&time_zone);
-    /// ```
     pub fn format_to_string(&self, value: &impl TimeZoneInput) -> String {
-        let mut s = String::new();
-        #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        self.format_to_write(&mut s, value)
-            .expect("Failed to write to a String.");
-        s
+        self.format(value).write_to_string().into_owned()
     }
 
     /// Formats a time segment with optional zero-padding.
     fn format_time_segment(n: u8, padding: ZeroPadding) -> String {
         debug_assert!((0..60).contains(&n));
         match padding {
-            ZeroPadding::On => format!("{:>02}", n),
-            ZeroPadding::Off => format!("{}", n),
+            ZeroPadding::On => format!("{n:>02}"),
+            ZeroPadding::Off => format!("{n}"),
         }
     }
 
     /// Formats the hours as a [`String`] with optional zero-padding.
-    fn format_offset_hours(time_zone: &impl TimeZoneInput, padding: ZeroPadding) -> String {
-        TimeZoneFormat::format_time_segment(
-            (time_zone.gmt_offset().raw_offset_seconds() / 3600).abs() as u8,
-            padding,
-        )
+    fn format_offset_hours(
+        time_zone: &impl TimeZoneInput,
+        padding: ZeroPadding,
+    ) -> Result<String, DateTimeError> {
+        if let Some(gmt_offset) = time_zone.gmt_offset() {
+            Ok(TimeZoneFormatter::format_time_segment(
+                (gmt_offset.offset_seconds() / 3600).unsigned_abs() as u8,
+                padding,
+            ))
+        } else {
+            Err(DateTimeError::MissingInputField(Some("gmt_offset")))
+        }
     }
 
     /// Formats the minutes as a [`String`] with zero-padding.
-    fn format_offset_minutes(time_zone: &impl TimeZoneInput) -> String {
-        TimeZoneFormat::format_time_segment(
-            (time_zone.gmt_offset().raw_offset_seconds() % 3600 / 60).abs() as u8,
-            ZeroPadding::On,
-        )
+    fn format_offset_minutes(time_zone: &impl TimeZoneInput) -> Result<String, DateTimeError> {
+        if let Some(gmt_offset) = time_zone.gmt_offset() {
+            Ok(TimeZoneFormatter::format_time_segment(
+                (gmt_offset.offset_seconds() % 3600 / 60).unsigned_abs() as u8,
+                ZeroPadding::On,
+            ))
+        } else {
+            Err(DateTimeError::MissingInputField(Some("gmt_offset")))
+        }
     }
 
     /// Formats the seconds as a [`String`] with zero-padding.
     fn format_offset_seconds<W: fmt::Write + ?Sized>(
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
-    ) -> fmt::Result {
-        sink.write_str(&TimeZoneFormat::format_time_segment(
-            (time_zone.gmt_offset().raw_offset_seconds() % 3600 % 60).abs() as u8,
-            ZeroPadding::On,
-        ))
+    ) -> Result<fmt::Result, DateTimeError> {
+        if let Some(gmt_offset) = time_zone.gmt_offset() {
+            Ok(sink.write_str(&TimeZoneFormatter::format_time_segment(
+                (gmt_offset.offset_seconds() % 3600 % 60).unsigned_abs() as u8,
+                ZeroPadding::On,
+            )))
+        } else {
+            Err(DateTimeError::MissingInputField(Some("gmt_offset")))
+        }
     }
 }
 
-/// Determines which ISO-8601 format should be used to format a [`GmtOffset`](crate::date::GmtOffset).
+/// Determines which ISO-8601 format should be used to format a [`GmtOffset`](icu_timezone::GmtOffset).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(clippy::exhaustive_enums)] // this type is stable
 pub enum IsoFormat {
@@ -786,7 +780,7 @@ pub enum IsoSeconds {
 /// Whether a field should be zero-padded in ISO-8601 format.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(clippy::exhaustive_enums)] // this type is stable
-pub enum ZeroPadding {
+pub(crate) enum ZeroPadding {
     /// Add zero-padding.
     On,
 
@@ -794,24 +788,15 @@ pub enum ZeroPadding {
     Off,
 }
 
-/// A config enum for initializing TimeZoneFormat.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
-pub enum TimeZoneFormatConfig {
-    GenericNonLocationLong,                     // Pacific Time
-    GenericNonLocationShort,                    // PT
-    GenericLocation,                            // Los Angeles Time
-    SpecificNonLocationLong,                    // Pacific Standard Time
-    SpecificNonLocationShort,                   // PDT
-    LocalizedGMT,                               // GMT-07:00
-    Iso8601(IsoFormat, IsoMinutes, IsoSeconds), // -07:00
-}
-
-/// An enum for fallback formats.
+/// An enum for time zone fallback formats.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum FallbackFormat {
+    /// The ISO 8601 format for time zone format fallback.
     Iso8601(IsoFormat, IsoMinutes, IsoSeconds),
+    /// The localized GMT format for time zone format fallback.
+    ///
+    /// See [UTS 35 on Dates](https://unicode.org/reports/tr35/tr35-dates.html#71-time-zone-format-terminology) for more information.
     LocalizedGmt,
 }
 
@@ -823,9 +808,18 @@ impl Default for FallbackFormat {
 
 /// A bag of options to define how time zone will be formatted.
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
-#[allow(clippy::exhaustive_structs)] // this type is stable
-pub struct TimeZoneFormatOptions {
+#[non_exhaustive]
+pub struct TimeZoneFormatterOptions {
+    /// The time zone format fallback option.
+    ///
+    /// See [UTS 35 on Dates](https://unicode.org/reports/tr35/tr35-dates.html#71-time-zone-format-terminology) for more information.
     pub fallback_format: FallbackFormat,
+}
+
+impl From<FallbackFormat> for TimeZoneFormatterOptions {
+    fn from(fallback_format: FallbackFormat) -> Self {
+        Self { fallback_format }
+    }
 }
 
 // Pacific Time
@@ -866,7 +860,7 @@ pub(super) struct ExemplarCityFormat {}
 
 // An enum for time zone format unit.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) enum TimeZoneFormatUnit {
+pub(super) enum TimeZoneFormatterUnit {
     GenericNonLocationLong(GenericNonLocationLongFormat),
     GenericNonLocationShort(GenericNonLocationShortFormat),
     SpecificNonLocationLong(SpecificNonLocationLongFormat),
@@ -877,9 +871,9 @@ pub(super) enum TimeZoneFormatUnit {
     ExemplarCity(ExemplarCityFormat),
 }
 
-impl Default for TimeZoneFormatUnit {
+impl Default for TimeZoneFormatterUnit {
     fn default() -> Self {
-        TimeZoneFormatUnit::LocalizedGmt(LocalizedGmtFormat {})
+        TimeZoneFormatterUnit::LocalizedGmt(LocalizedGmtFormat {})
     }
 }
 
@@ -889,16 +883,16 @@ pub(super) trait FormatTimeZone {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError>;
+    ) -> Result<fmt::Result, DateTimeError>;
 }
 
-impl FormatTimeZone for TimeZoneFormatUnit {
+impl FormatTimeZone for TimeZoneFormatterUnit {
     fn format<W: fmt::Write + ?Sized>(
         &self,
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
+    ) -> Result<fmt::Result, DateTimeError> {
         match self {
             Self::GenericNonLocationLong(unit) => unit.format(sink, time_zone, data_payloads),
             Self::GenericNonLocationShort(unit) => unit.format(sink, time_zone, data_payloads),
@@ -921,7 +915,7 @@ impl FormatTimeZone for GenericNonLocationLongFormat {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
+    ) -> Result<fmt::Result, DateTimeError> {
         let formatted_time_zone: Option<&str> = data_payloads
             .mz_generic_long
             .as_ref()
@@ -929,7 +923,7 @@ impl FormatTimeZone for GenericNonLocationLongFormat {
             .and_then(|metazones| {
                 time_zone
                     .time_zone_id()
-                    .and_then(|tz| metazones.overrides.get(tz))
+                    .and_then(|tz| metazones.overrides.get(&tz))
             })
             .or_else(|| {
                 data_payloads
@@ -939,13 +933,13 @@ impl FormatTimeZone for GenericNonLocationLongFormat {
                     .and_then(|metazones| {
                         time_zone
                             .metazone_id()
-                            .and_then(|mz| metazones.defaults.get(mz))
+                            .and_then(|mz| metazones.defaults.get(&mz))
                     })
             });
 
         match formatted_time_zone {
             Some(ftz) => Ok(sink.write_str(ftz)),
-            None => Err(DateTimeFormatError::UnsupportedOptions),
+            None => Err(DateTimeError::UnsupportedOptions),
         }
     }
 }
@@ -959,7 +953,7 @@ impl FormatTimeZone for GenericNonLocationShortFormat {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
+    ) -> Result<fmt::Result, DateTimeError> {
         let formatted_time_zone: Option<&str> = data_payloads
             .mz_generic_short
             .as_ref()
@@ -967,7 +961,7 @@ impl FormatTimeZone for GenericNonLocationShortFormat {
             .and_then(|metazones| {
                 time_zone
                     .time_zone_id()
-                    .and_then(|tz| metazones.overrides.get(tz))
+                    .and_then(|tz| metazones.overrides.get(&tz))
             })
             .or_else(|| {
                 data_payloads
@@ -977,13 +971,13 @@ impl FormatTimeZone for GenericNonLocationShortFormat {
                     .and_then(|metazones| {
                         time_zone
                             .metazone_id()
-                            .and_then(|mz| metazones.defaults.get(mz))
+                            .and_then(|mz| metazones.defaults.get(&mz))
                     })
             });
 
         match formatted_time_zone {
             Some(ftz) => Ok(sink.write_str(ftz)),
-            None => Err(DateTimeFormatError::UnsupportedOptions),
+            None => Err(DateTimeError::UnsupportedOptions),
         }
     }
 }
@@ -997,7 +991,7 @@ impl FormatTimeZone for SpecificNonLocationShortFormat {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
+    ) -> Result<fmt::Result, DateTimeError> {
         let formatted_time_zone: Option<&str> = data_payloads
             .mz_specific_short
             .as_ref()
@@ -1005,8 +999,8 @@ impl FormatTimeZone for SpecificNonLocationShortFormat {
             .and_then(|metazones| {
                 time_zone.time_zone_id().and_then(|tz| {
                     time_zone
-                        .time_variant()
-                        .and_then(|variant| metazones.overrides.get(tz, variant).ok())
+                        .zone_variant()
+                        .and_then(|variant| metazones.overrides.get_2d(&tz, &variant))
                 })
             })
             .or_else(|| {
@@ -1017,15 +1011,15 @@ impl FormatTimeZone for SpecificNonLocationShortFormat {
                     .and_then(|metazones| {
                         time_zone.metazone_id().and_then(|mz| {
                             time_zone
-                                .time_variant()
-                                .and_then(|variant| metazones.defaults.get(mz, variant).ok())
+                                .zone_variant()
+                                .and_then(|variant| metazones.defaults.get_2d(&mz, &variant))
                         })
                     })
             });
 
         match formatted_time_zone {
             Some(ftz) => Ok(sink.write_str(ftz)),
-            None => Err(DateTimeFormatError::UnsupportedOptions),
+            None => Err(DateTimeError::UnsupportedOptions),
         }
     }
 }
@@ -1039,7 +1033,7 @@ impl FormatTimeZone for SpecificNonLocationLongFormat {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
+    ) -> Result<fmt::Result, DateTimeError> {
         let formatted_time_zone: Option<&str> = data_payloads
             .mz_specific_long
             .as_ref()
@@ -1047,8 +1041,8 @@ impl FormatTimeZone for SpecificNonLocationLongFormat {
             .and_then(|metazones| {
                 time_zone.time_zone_id().and_then(|tz| {
                     time_zone
-                        .time_variant()
-                        .and_then(|variant| metazones.overrides.get(tz, variant).ok())
+                        .zone_variant()
+                        .and_then(|variant| metazones.overrides.get_2d(&tz, &variant))
                 })
             })
             .or_else(|| {
@@ -1059,15 +1053,15 @@ impl FormatTimeZone for SpecificNonLocationLongFormat {
                     .and_then(|metazones| {
                         time_zone.metazone_id().and_then(|mz| {
                             time_zone
-                                .time_variant()
-                                .and_then(|variant| metazones.defaults.get(mz, variant).ok())
+                                .zone_variant()
+                                .and_then(|variant| metazones.defaults.get_2d(&mz, &variant))
                         })
                     })
             });
 
         match formatted_time_zone {
             Some(ftz) => Ok(sink.write_str(ftz)),
-            None => Err(DateTimeFormatError::UnsupportedOptions),
+            None => Err(DateTimeError::UnsupportedOptions),
         }
     }
 }
@@ -1084,37 +1078,60 @@ impl FormatTimeZone for LocalizedGmtFormat {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
-        let gmt_offset = time_zone.gmt_offset();
-        if gmt_offset.is_zero() {
-            Ok(sink.write_str(&data_payloads.zone_formats.get().gmt_zero_format.clone()))
-        } else {
-            // TODO(blocked on #277) Use formatter utility instead of replacing "{0}".
-            Ok(sink.write_str(
-                &data_payloads
-                    .zone_formats
-                    .get()
-                    .gmt_format
-                    .replace(
-                        "{0}",
-                        if gmt_offset.is_positive() {
-                            &data_payloads.zone_formats.get().hour_format.0
-                        } else {
-                            &data_payloads.zone_formats.get().hour_format.1
-                        },
-                    )
-                    // support all combos of "(HH|H):mm" by replacing longest patterns first.
-                    .replace(
-                        "HH",
-                        &TimeZoneFormat::format_offset_hours(time_zone, ZeroPadding::On),
-                    )
-                    .replace("mm", &TimeZoneFormat::format_offset_minutes(time_zone))
-                    .replace(
-                        'H',
-                        &TimeZoneFormat::format_offset_hours(time_zone, ZeroPadding::Off),
-                    ),
-            ))
-        }
+    ) -> Result<fmt::Result, DateTimeError> {
+        if let Some(gmt_offset) = time_zone.gmt_offset() {
+            return if gmt_offset.is_zero() {
+                Ok(sink.write_str(&data_payloads.zone_formats.get().gmt_zero_format.clone()))
+            } else {
+                // TODO(blocked on #277) Use formatter utility instead of replacing "{0}".
+                Ok(sink.write_str(
+                    &data_payloads
+                        .zone_formats
+                        .get()
+                        .gmt_format
+                        .replace(
+                            "{0}",
+                            if gmt_offset.is_positive() {
+                                &data_payloads.zone_formats.get().hour_format.0
+                            } else {
+                                &data_payloads.zone_formats.get().hour_format.1
+                            },
+                        )
+                        // support all combos of "(HH|H):mm" by replacing longest patterns first.
+                        .replace(
+                            "HH",
+                            if let Ok(offset_hours) =
+                                &TimeZoneFormatter::format_offset_hours(time_zone, ZeroPadding::On)
+                            {
+                                offset_hours
+                            } else {
+                                return Err(DateTimeError::MissingInputField(Some("gmt_offset")));
+                            },
+                        )
+                        .replace(
+                            "mm",
+                            if let Ok(offset_minutes) =
+                                &TimeZoneFormatter::format_offset_minutes(time_zone)
+                            {
+                                offset_minutes
+                            } else {
+                                return Err(DateTimeError::MissingInputField(Some("gmt_offset")));
+                            },
+                        )
+                        .replace(
+                            'H',
+                            if let Ok(offset_hours) =
+                                &TimeZoneFormatter::format_offset_hours(time_zone, ZeroPadding::Off)
+                            {
+                                offset_hours
+                            } else {
+                                return Err(DateTimeError::MissingInputField(Some("gmt_offset")));
+                            },
+                        ),
+                ))
+            };
+        };
+        Err(DateTimeError::MissingInputField(Some("gmt_offset")))
     }
 }
 
@@ -1127,13 +1144,13 @@ impl FormatTimeZone for GenericLocationFormat {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
+    ) -> Result<fmt::Result, DateTimeError> {
         // TODO(blocked on #277) Use formatter utility instead of replacing "{0}".
         let formatted_time_zone: Option<alloc::string::String> = data_payloads
             .exemplar_cities
             .as_ref()
             .map(|p| p.get())
-            .and_then(|cities| time_zone.time_zone_id().and_then(|id| cities.0.get(id)))
+            .and_then(|cities| time_zone.time_zone_id().and_then(|id| cities.0.get(&id)))
             .map(|location| {
                 data_payloads
                     .zone_formats
@@ -1143,13 +1160,13 @@ impl FormatTimeZone for GenericLocationFormat {
             });
         match formatted_time_zone {
             Some(ftz) => Ok(sink.write_str(&ftz)),
-            None => Err(DateTimeFormatError::UnsupportedOptions),
+            None => Err(DateTimeError::UnsupportedOptions),
         }
     }
 }
 
 impl FormatTimeZone for Iso8601Format {
-    /// Writes a [`GmtOffset`](crate::date::GmtOffset) in ISO-8601 format according to the
+    /// Writes a [`GmtOffset`](crate::input::GmtOffset) in ISO-8601 format according to the
     /// given formatting options.
     ///
     /// [`IsoFormat`] determines whether the format should be Basic or Extended,
@@ -1165,67 +1182,80 @@ impl FormatTimeZone for Iso8601Format {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         _data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
-        let gmt_offset = time_zone.gmt_offset();
-        if gmt_offset.is_zero()
-            && matches!(self.format, IsoFormat::UtcBasic | IsoFormat::UtcExtended)
-        {
-            if let Err(e) = sink.write_char('Z') {
-                return Ok(Err(e));
-            }
-        }
-
-        let extended_format = matches!(self.format, IsoFormat::Extended | IsoFormat::UtcExtended);
-        if let Err(e) = sink.write_char(if gmt_offset.is_positive() { '+' } else { '-' }) {
-            return Ok(Err(e));
-        }
-        if let Err(e) = sink.write_str(&TimeZoneFormat::format_offset_hours(
-            time_zone,
-            ZeroPadding::On,
-        )) {
-            return Ok(Err(e));
-        }
-
-        match self.minutes {
-            IsoMinutes::Required => {
-                if extended_format {
-                    if let Err(e) = sink.write_char(':') {
-                        return Ok(Err(e));
-                    }
-                }
-                if let Err(e) = sink.write_str(&TimeZoneFormat::format_offset_minutes(time_zone)) {
+    ) -> Result<fmt::Result, DateTimeError> {
+        if let Some(gmt_offset) = time_zone.gmt_offset() {
+            if gmt_offset.is_zero()
+                && matches!(self.format, IsoFormat::UtcBasic | IsoFormat::UtcExtended)
+            {
+                if let Err(e) = sink.write_char('Z') {
                     return Ok(Err(e));
                 }
             }
-            IsoMinutes::Optional => {
-                if gmt_offset.has_minutes() {
+
+            let extended_format =
+                matches!(self.format, IsoFormat::Extended | IsoFormat::UtcExtended);
+            if let Err(e) = sink.write_char(if gmt_offset.is_positive() { '+' } else { '-' }) {
+                return Ok(Err(e));
+            }
+            if let Ok(offset_hours) =
+                &TimeZoneFormatter::format_offset_hours(time_zone, ZeroPadding::On)
+            {
+                if let Err(e) = sink.write_str(offset_hours) {
+                    return Ok(Err(e));
+                }
+            } else {
+                return Err(DateTimeError::MissingInputField(Some("gmt_offset")));
+            }
+
+            match self.minutes {
+                IsoMinutes::Required => {
                     if extended_format {
                         if let Err(e) = sink.write_char(':') {
                             return Ok(Err(e));
                         }
                     }
-                    if let Err(e) =
-                        sink.write_str(&TimeZoneFormat::format_offset_minutes(time_zone))
+                    if let Ok(offset_minutes) = &TimeZoneFormatter::format_offset_minutes(time_zone)
                     {
-                        return Ok(Err(e));
+                        if let Err(e) = sink.write_str(offset_minutes) {
+                            return Ok(Err(e));
+                        }
+                    } else {
+                        return Err(DateTimeError::MissingInputField(Some("gmt_offset")));
+                    }
+                }
+                IsoMinutes::Optional => {
+                    if gmt_offset.has_minutes() {
+                        if extended_format {
+                            if let Err(e) = sink.write_char(':') {
+                                return Ok(Err(e));
+                            }
+                        }
+                        if let Ok(offset_minutes) =
+                            &TimeZoneFormatter::format_offset_minutes(time_zone)
+                        {
+                            if let Err(e) = sink.write_str(offset_minutes) {
+                                return Ok(Err(e));
+                            }
+                        } else {
+                            return Err(DateTimeError::MissingInputField(Some("gmt_offset")));
+                        }
                     }
                 }
             }
-        }
 
-        if let IsoSeconds::Optional = self.seconds {
-            if gmt_offset.has_seconds() {
-                if extended_format {
-                    if let Err(e) = sink.write_char(':') {
-                        return Ok(Err(e));
+            if let IsoSeconds::Optional = self.seconds {
+                if gmt_offset.has_seconds() {
+                    if extended_format {
+                        if let Err(e) = sink.write_char(':') {
+                            return Ok(Err(e));
+                        }
                     }
-                }
-                if let Err(e) = TimeZoneFormat::format_offset_seconds(sink, time_zone) {
-                    return Ok(Err(e));
+                    return TimeZoneFormatter::format_offset_seconds(sink, time_zone);
                 }
             }
-        }
-        Ok(Ok(()))
+            return Ok(Ok(()));
+        };
+        Err(DateTimeError::MissingInputField(Some("gmt_offset")))
     }
 }
 
@@ -1235,13 +1265,13 @@ impl FormatTimeZone for ExemplarCityFormat {
         sink: &mut W,
         time_zone: &impl TimeZoneInput,
         data_payloads: &TimeZoneDataPayloads,
-    ) -> Result<fmt::Result, DateTimeFormatError> {
+    ) -> Result<fmt::Result, DateTimeError> {
         // Writes the exemplar city associated with this time zone.
         let formatted_exemplar_city = data_payloads
             .exemplar_cities
             .as_ref()
             .map(|p| p.get())
-            .and_then(|cities| time_zone.time_zone_id().and_then(|id| cities.0.get(id)));
+            .and_then(|cities| time_zone.time_zone_id().and_then(|id| cities.0.get(&id)));
 
         match formatted_exemplar_city {
             Some(ftz) => Ok(sink.write_str(ftz)),
@@ -1249,15 +1279,15 @@ impl FormatTimeZone for ExemplarCityFormat {
                 // Writes the unknown city "Etc/Unknown" for the current locale.
                 //
                 // If there is no localized form of "Etc/Unknown" for the current locale,
-                // returns the "Etc/Uknown" value of the `und` locale as a hard-coded string.
+                // returns the "Etc/Unknown" value of the `und` locale as a hard-coded string.
                 //
-                // This can be used as a fallback if [`exemplar_city()`](TimeZoneFormat::exemplar_city())
+                // This can be used as a fallback if [`exemplar_city()`](TimeZoneFormatter::exemplar_city())
                 // is unable to produce a localized form of the time zone's exemplar city in the current locale.
                 let formatted_unknown_city = data_payloads
                     .exemplar_cities
                     .as_ref()
                     .map(|p| p.get())
-                    .and_then(|cities| cities.0.get("Etc/Unknown"))
+                    .and_then(|cities| cities.0.get(&TimeZoneBcp47Id(tinystr!(8, "unk"))))
                     .unwrap_or(&Cow::Borrowed("Unknown"));
                 Ok(sink.write_str(formatted_unknown_city))
             }

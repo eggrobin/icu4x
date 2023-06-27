@@ -10,6 +10,7 @@ use super::{
 use alloc::vec::Vec;
 use core::str::FromStr;
 
+#[derive(Debug)]
 #[allow(clippy::exhaustive_structs)] // this type is stable
 pub struct GenericPattern {
     pub items: Vec<GenericPatternItem>,
@@ -23,12 +24,9 @@ impl GenericPattern {
         for item in self.items.into_iter() {
             match item {
                 GenericPatternItem::Placeholder(idx) => {
+                    #[allow(clippy::unwrap_used)] // idx is a valid base-10 digit
                     let replacement = replacements.get(idx as usize).ok_or_else(|| {
-                        #[allow(clippy::expect_used)]
-                        // TODO(#1668) Clippy exceptions need docs or fixing.
-                        let idx = char::from_digit(idx as u32, 10)
-                            .expect("Failed to convert placeholder idx to char");
-                        PatternError::UnknownSubstitution(idx)
+                        PatternError::UnknownSubstitution(char::from_digit(idx as u32, 10).unwrap())
                     })?;
                     result.extend(replacement.items.iter());
                 }
@@ -55,6 +53,7 @@ impl FromStr for GenericPattern {
 }
 
 #[cfg(test)]
+#[cfg(feature = "datagen")]
 mod test {
     use super::*;
 

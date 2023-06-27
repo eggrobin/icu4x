@@ -6,24 +6,19 @@
 
 icu_benchmark_macros::static_setup!();
 
-use icu_list::{ListFormatter, ListStyle};
-use icu_locid::locale;
-use writeable::Writeable;
+use icu::list::{ListFormatter, ListLength};
+use icu::locid::locale;
 
 #[no_mangle]
 fn main(_argc: isize, _argv: *const *const u8) -> isize {
     icu_benchmark_macros::main_setup!();
 
-    let provider = icu_testdata::get_static_provider();
-
     let list_formatter =
-        ListFormatter::try_new_and(locale!("es"), &provider, ListStyle::Wide).unwrap();
+        ListFormatter::try_new_and_with_length(&locale!("es").into(), ListLength::Wide).unwrap();
 
     println!(
         "{}",
-        list_formatter
-            .format(["España", "Francia", "Suiza", "Italia"].iter())
-            .write_to_string()
+        list_formatter.format(["España", "Francia", "Suiza", "Italia"].iter())
     );
 
     0

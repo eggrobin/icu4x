@@ -7,15 +7,15 @@
 
 #![no_main] // https://github.com/unicode-org/icu4x/issues/395
 
-use icu::calendar::Gregorian;
-use icu::datetime::DateTimeFormatOptions;
+use icu::calendar::{DateTime, Gregorian};
+use icu::datetime::time_zone::TimeZoneFormatterOptions;
+use icu::datetime::{DateTimeFormatterOptions, TypedZonedDateTimeFormatter};
 use icu::locid::{locale, Locale};
 use icu::plurals::{PluralCategory, PluralRules};
-use icu_datetime::{
-    mock::zoned_datetime::MockZonedDateTime, TimeZoneFormatOptions, ZonedDateTimeFormat,
-};
-use icu_uniset::UnicodeSetBuilder;
+use icu::timezone::CustomTimeZone;
+use icu_collections::codepointinvlist::CodePointInversionListBuilder;
 use std::env;
+use std::str::FromStr;
 
 fn print<T: AsRef<str>>(_input: T) {
     #[cfg(debug_assertions)]
@@ -24,8 +24,6 @@ fn print<T: AsRef<str>>(_input: T) {
 
 #[no_mangle]
 fn main(_argc: isize, _argv: *const *const u8) -> isize {
-    let provider = icu_testdata::get_static_provider();
-
     let args: Vec<String> = env::args().collect();
 
     let locale: Locale = args
@@ -33,39 +31,38 @@ fn main(_argc: isize, _argv: *const *const u8) -> isize {
         .map(|s| s.parse().expect("Failed to parse locale"))
         .unwrap_or_else(|| locale!("en"));
 
-    let user_name = args.get(2).cloned().unwrap_or_else(|| "John".to_string());
+    let user_name = args.as_slice().get(2).map(String::as_str).unwrap_or("John");
 
     let email_count: usize = args
         .get(3)
-        .unwrap_or(&"5".to_string())
-        .parse()
-        .expect("Could not parse unread email count as unsigned integer.");
+        .map(|s| {
+            s.parse()
+                .expect("Could not parse unread email count as unsigned integer.")
+        })
+        .unwrap_or(5);
 
-    print(format!("\nTextual User Interface Example ({})", locale));
+    print(format!("\nTextual User Interface Example ({locale})"));
     print("===================================");
-    print(format!("User: {}", user_name));
+    print(format!("User: {user_name}"));
 
     {
-        let dtf = ZonedDateTimeFormat::<Gregorian>::try_new(
-            locale,
-            &provider,
-            &provider,
-            &provider,
-            &DateTimeFormatOptions::default(),
-            &TimeZoneFormatOptions::default(),
+        let dtf = TypedZonedDateTimeFormatter::<Gregorian>::try_new_unstable(
+            &icu_testdata::unstable(),
+            &locale.into(),
+            DateTimeFormatterOptions::default(),
+            TimeZoneFormatterOptions::default(),
         )
-        .expect("Failed to create DateTimeFormat.");
-        let today: MockZonedDateTime = "2020-10-10T18:56:00Z"
-            .parse()
-            .expect("Failed to parse date");
+        .expect("Failed to create TypedDateTimeFormatter.");
+        let today_date = DateTime::try_new_gregorian_datetime(2020, 10, 10, 18, 56, 0).unwrap();
+        let today_tz = CustomTimeZone::from_str("Z").unwrap(); // Z refers to the utc timezone
 
-        let formatted_dt = dtf.format(&today);
+        let formatted_dt = dtf.format(&today_date, &today_tz);
 
-        print(format!("Today is: {}", formatted_dt));
+        print(format!("Today is: {formatted_dt}"));
     }
 
     {
-        let mut builder = UnicodeSetBuilder::new();
+        let mut builder = CodePointInversionListBuilder::new();
         // See http://ftp.unicode.org/Public/MAPPINGS/ISO8859/8859-1.TXT
         builder.add_range(&('\u{0000}'..='\u{00FF}'));
         let latin1_set = builder.build();
@@ -80,12 +77,15 @@ fn main(_argc: isize, _argv: *const *const u8) -> isize {
     }
 
     {
-        let pr = PluralRules::try_new_cardinal(locale!("en"), &provider)
-            .expect("Failed to create PluralRules.");
+        let pr = PluralRules::try_new_cardinal_unstable(
+            &icu_testdata::unstable(),
+            &locale!("en").into(),
+        )
+        .expect("Failed to create PluralRules.");
 
-        match pr.select(email_count) {
+        match pr.category_for(email_count) {
             PluralCategory::One => print("Note: You have one unread email."),
-            _ => print(format!("Note: You have {} unread emails.", email_count)),
+            _ => print(format!("Note: You have {email_count} unread emails.")),
         }
     }
 

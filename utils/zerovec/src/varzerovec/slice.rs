@@ -26,12 +26,20 @@ use core::ops::Range;
 /// This essentially allows for the construction of zero-copy types isomorphic to `Vec<Vec<T>>` by instead
 /// using `VarZeroVec<ZeroSlice<T>>`.
 ///
-/// This type can be nested within itself to allow for multi-level nested `Vec`s, for
-/// example the following code constructs the conceptual zero-copy equivalent of `Vec<Vec<Vec<str>>>`
+/// The `F` type parameter is a [`VarZeroVecFormat`] (see its docs for more details), which can be used to select the
+/// precise format of the backing buffer with various size and performance tradeoffs. It defaults to [`Index16`].
+///
+/// This type can be nested within itself to allow for multi-level nested `Vec`s.
+///
+/// # Examples
+///
+/// ## Nested Slices
+///
+/// The following code constructs the conceptual zero-copy equivalent of `Vec<Vec<Vec<str>>>`
 ///
 /// ```rust
-/// use zerovec::{ZeroVec, VarZeroSlice, VarZeroVec};
 /// use zerovec::ule::*;
+/// use zerovec::{VarZeroSlice, VarZeroVec, ZeroVec};
 /// let strings_1: Vec<&str> = vec!["foo", "bar", "baz"];
 /// let strings_2: Vec<&str> = vec!["twelve", "seventeen", "forty two"];
 /// let strings_3: Vec<&str> = vec!["我", "喜歡", "烏龍茶"];
@@ -48,40 +56,79 @@ use core::ops::Range;
 /// let vzv_34 = VarZeroVec::from(&[vzv_3.as_slice(), vzv_4.as_slice()]);
 /// let vzv_all = VarZeroVec::from(&[vzv_12.as_slice(), vzv_34.as_slice()]);
 ///
-/// let reconstructed: Vec<Vec<Vec<String>>> = vzv_all.iter()
-///        .map(|v: &VarZeroSlice<VarZeroSlice<str>>| {
-///             v.iter().map(|x: &VarZeroSlice<_>| x.as_varzerovec().iter().map(|s| s.to_owned()).collect::<Vec<String>>())
-///              .collect::<Vec<_>>()
-///         }).collect::<Vec<_>>();
+/// let reconstructed: Vec<Vec<Vec<String>>> = vzv_all
+///     .iter()
+///     .map(|v: &VarZeroSlice<VarZeroSlice<str>>| {
+///         v.iter()
+///             .map(|x: &VarZeroSlice<_>| {
+///                 x.as_varzerovec()
+///                     .iter()
+///                     .map(|s| s.to_owned())
+///                     .collect::<Vec<String>>()
+///             })
+///             .collect::<Vec<_>>()
+///     })
+///     .collect::<Vec<_>>();
 /// assert_eq!(reconstructed, all_strings);
 ///
 /// let bytes = vzv_all.as_bytes();
-/// let vzv_from_bytes: VarZeroVec<VarZeroSlice<VarZeroSlice<str>>> = VarZeroVec::parse_byte_slice(bytes).unwrap();
+/// let vzv_from_bytes: VarZeroVec<VarZeroSlice<VarZeroSlice<str>>> =
+///     VarZeroVec::parse_byte_slice(bytes).unwrap();
 /// assert_eq!(vzv_from_bytes, vzv_all);
+/// ```
+///
+/// ## Iterate over Windows
+///
+/// Although [`VarZeroSlice`] does not itself have a `.windows` iterator like
+/// [core::slice::Windows], this behavior can be easily modeled using an iterator:
+///
+/// ```
+/// use zerovec::VarZeroVec;
+///
+/// let vzv = VarZeroVec::<str>::from(&["a", "b", "c", "d"]);
+/// # let mut pairs: Vec<(&str, &str)> = Vec::new();
+///
+/// let mut it = vzv.iter().peekable();
+/// while let (Some(x), Some(y)) = (it.next(), it.peek()) {
+///     // Evaluate (x, y) here.
+/// #   pairs.push((x, y));
+/// }
+/// # assert_eq!(pairs, &[("a", "b"), ("b", "c"), ("c", "d")]);
 /// ```
 //
 // safety invariant: The slice MUST be one which parses to
 // a valid VarZeroVecComponents<T>
 #[repr(transparent)]
-pub struct VarZeroSlice<T: ?Sized> {
-    marker: PhantomData<T>,
+pub struct VarZeroSlice<T: ?Sized, F = Index16> {
+    marker: PhantomData<(F, T)>,
     /// The original slice this was constructed from
     entire_slice: [u8],
 }
 
-impl<T: VarULE + ?Sized> VarZeroSlice<T> {
+impl<T: VarULE + ?Sized, F: VarZeroVecFormat> VarZeroSlice<T, F> {
     /// Construct a new empty VarZeroSlice
-    pub fn new_empty() -> &'static Self {
+    pub const fn new_empty() -> &'static Self {
         let arr: &[u8] = &[];
         unsafe { mem::transmute(arr) }
     }
+
     /// Obtain a [`VarZeroVecComponents`] borrowing from the internal buffer
     #[inline]
-    pub(crate) fn as_components<'a>(&'a self) -> VarZeroVecComponents<'a, T> {
+    pub(crate) fn as_components<'a>(&'a self) -> VarZeroVecComponents<'a, T, F> {
         unsafe {
             // safety: VarZeroSlice is guaranteed to parse here
             VarZeroVecComponents::from_bytes_unchecked(&self.entire_slice)
         }
+    }
+
+    /// Uses a `&[u8]` buffer as a `VarZeroSlice<T>` without any verification.
+    ///
+    /// # Safety
+    ///
+    /// `bytes` need to be an output from [`VarZeroSlice::as_bytes()`].
+    pub const unsafe fn from_bytes_unchecked(bytes: &[u8]) -> &Self {
+        // self is really just a wrapper around a byte slice
+        mem::transmute(bytes)
     }
 
     /// Get the number of elements in this slice
@@ -224,7 +271,7 @@ impl<T: VarULE + ?Sized> VarZeroSlice<T> {
     /// # Ok::<(), ZeroVecError>(())
     /// ```
     #[inline]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         &self.entire_slice
     }
 
@@ -232,8 +279,8 @@ impl<T: VarULE + ?Sized> VarZeroSlice<T> {
     ///
     /// If you wish to repeatedly call methods on this [`VarZeroSlice`],
     /// it is more efficient to perform this conversion first
-    pub fn as_varzerovec<'a>(&'a self) -> VarZeroVec<'a, T> {
-        self.into()
+    pub const fn as_varzerovec<'a>(&'a self) -> VarZeroVec<'a, T, F> {
+        VarZeroVec::Borrowed(self)
     }
 
     /// Parse a VarZeroSlice from a slice of the appropriate format
@@ -259,11 +306,12 @@ impl<T: VarULE + ?Sized> VarZeroSlice<T> {
     }
 }
 
-impl<T> VarZeroSlice<T>
+impl<T, F> VarZeroSlice<T, F>
 where
     T: VarULE,
     T: ?Sized,
     T: Ord,
+    F: VarZeroVecFormat,
 {
     /// Binary searches a sorted `VarZeroVec<T>` for the given element. For more information, see
     /// the standard library function [`binary_search`].
@@ -335,10 +383,11 @@ where
     }
 }
 
-impl<T> VarZeroSlice<T>
+impl<T, F> VarZeroSlice<T, F>
 where
     T: VarULE,
     T: ?Sized,
+    F: VarZeroVecFormat,
 {
     /// Binary searches a sorted `VarZeroVec<T>` for the given predicate. For more information, see
     /// the standard library function [`binary_search_by`].
@@ -363,6 +412,72 @@ where
     pub fn binary_search_by(&self, predicate: impl FnMut(&T) -> Ordering) -> Result<usize, usize> {
         self.as_components().binary_search_by(predicate)
     }
+
+    /// Binary searches a `VarZeroVec<T>` for the given predicate within a certain sorted range.
+    ///
+    /// If the range is out of bounds, returns `None`. Otherwise, returns a `Result` according
+    /// to the behavior of the standard library function [`binary_search`].
+    ///
+    /// The index is returned relative to the start of the range.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use std::str::Utf8Error;
+    /// # use zerovec::ule::ZeroVecError;
+    /// # use zerovec::VarZeroVec;
+    ///
+    /// let strings = vec!["a", "b", "f", "g", "m", "n", "q"];
+    /// let vec = VarZeroVec::<str>::from(&strings);
+    ///
+    /// // Same behavior as binary_search when the range covers the whole slice:
+    /// assert_eq!(
+    ///     vec.binary_search_in_range_by(|v| v.cmp("g"), 0..7),
+    ///     Some(Ok(3))
+    /// );
+    /// assert_eq!(
+    ///     vec.binary_search_in_range_by(|v| v.cmp("h"), 0..7),
+    ///     Some(Err(4))
+    /// );
+    ///
+    /// // Will not look outside of the range:
+    /// assert_eq!(
+    ///     vec.binary_search_in_range_by(|v| v.cmp("g"), 0..1),
+    ///     Some(Err(1))
+    /// );
+    /// assert_eq!(
+    ///     vec.binary_search_in_range_by(|v| v.cmp("g"), 6..7),
+    ///     Some(Err(0))
+    /// );
+    ///
+    /// // Will return indices relative to the start of the range:
+    /// assert_eq!(
+    ///     vec.binary_search_in_range_by(|v| v.cmp("g"), 1..6),
+    ///     Some(Ok(2))
+    /// );
+    /// assert_eq!(
+    ///     vec.binary_search_in_range_by(|v| v.cmp("h"), 1..6),
+    ///     Some(Err(3))
+    /// );
+    ///
+    /// // Will return None if the range is out of bounds:
+    /// assert_eq!(
+    ///     vec.binary_search_in_range_by(|v| v.cmp("x"), 100..200),
+    ///     None
+    /// );
+    /// assert_eq!(vec.binary_search_in_range_by(|v| v.cmp("x"), 0..200), None);
+    /// # Ok::<(), ZeroVecError>(())
+    /// ```
+    ///
+    /// [`binary_search`]: https://doc.rust-lang.org/std/primitive.slice.html#method.binary_search
+    pub fn binary_search_in_range_by(
+        &self,
+        predicate: impl FnMut(&T) -> Ordering,
+        range: Range<usize>,
+    ) -> Option<Result<usize, usize>> {
+        self.as_components()
+            .binary_search_in_range_by(predicate, range)
+    }
 }
 // Safety (based on the safety checklist on the VarULE trait):
 //  1. VarZeroSlice does not include any uninitialized or padding bytes (achieved by `#[repr(transparent)]` on a
@@ -374,9 +489,9 @@ where
 //  5. The impl of `from_byte_slice_unchecked()` returns a reference to the same data.
 //  6. `as_byte_slice()` is equivalent to a regular transmute of the underlying data
 //  7. VarZeroSlice byte equality is semantic equality (relying on the guideline of the underlying VarULE type)
-unsafe impl<T: VarULE + ?Sized + 'static> VarULE for VarZeroSlice<T> {
+unsafe impl<T: VarULE + ?Sized + 'static, F: VarZeroVecFormat> VarULE for VarZeroSlice<T, F> {
     fn validate_byte_slice(bytes: &[u8]) -> Result<(), ZeroVecError> {
-        let _: VarZeroVecComponents<T> = VarZeroVecComponents::parse_byte_slice(bytes)?;
+        let _: VarZeroVecComponents<T, F> = VarZeroVecComponents::parse_byte_slice(bytes)?;
         Ok(())
     }
 
@@ -390,51 +505,59 @@ unsafe impl<T: VarULE + ?Sized + 'static> VarULE for VarZeroSlice<T> {
     }
 }
 
-impl<T: VarULE + ?Sized> Index<usize> for VarZeroSlice<T> {
+impl<T: VarULE + ?Sized, F: VarZeroVecFormat> Index<usize> for VarZeroSlice<T, F> {
     type Output = T;
     fn index(&self, index: usize) -> &Self::Output {
-        #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        self.get(index).expect("Indexing VarZeroVec out of bounds")
+        #[allow(clippy::panic)] // documented
+        match self.get(index) {
+            Some(x) => x,
+            None => panic!(
+                "index out of bounds: the len is {} but the index is {index}",
+                self.len()
+            ),
+        }
     }
 }
 
-impl<T> PartialEq<VarZeroSlice<T>> for VarZeroSlice<T>
+impl<T, F> PartialEq<VarZeroSlice<T, F>> for VarZeroSlice<T, F>
 where
     T: VarULE,
     T: ?Sized,
     T: PartialEq,
+    F: VarZeroVecFormat,
 {
     #[inline]
-    fn eq(&self, other: &VarZeroSlice<T>) -> bool {
+    fn eq(&self, other: &VarZeroSlice<T, F>) -> bool {
         // VarULE has an API guarantee that this is equivalent
         // to `T::VarULE::eq()`
         self.entire_slice.eq(&other.entire_slice)
     }
 }
 
-impl<T> Eq for VarZeroSlice<T>
+impl<T, F> Eq for VarZeroSlice<T, F>
 where
     T: VarULE,
     T: ?Sized,
     T: Eq,
+    F: VarZeroVecFormat,
 {
 }
 
-impl<T: VarULE + ?Sized + PartialOrd> PartialOrd for VarZeroSlice<T> {
+impl<T: VarULE + ?Sized + PartialOrd, F: VarZeroVecFormat> PartialOrd for VarZeroSlice<T, F> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.iter().partial_cmp(other.iter())
     }
 }
 
-impl<T: VarULE + ?Sized + Ord> Ord for VarZeroSlice<T> {
+impl<T: VarULE + ?Sized + Ord, F: VarZeroVecFormat> Ord for VarZeroSlice<T, F> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.iter().cmp(other.iter())
     }
 }
 
-impl<T: VarULE + ?Sized> fmt::Debug for VarZeroSlice<T>
+impl<T: VarULE + ?Sized, F: VarZeroVecFormat> fmt::Debug for VarZeroSlice<T, F>
 where
     T: fmt::Debug,
 {
@@ -443,8 +566,8 @@ where
     }
 }
 
-impl<T: ?Sized> AsRef<VarZeroSlice<T>> for VarZeroSlice<T> {
-    fn as_ref(&self) -> &VarZeroSlice<T> {
+impl<T: ?Sized, F: VarZeroVecFormat> AsRef<VarZeroSlice<T, F>> for VarZeroSlice<T, F> {
+    fn as_ref(&self) -> &VarZeroSlice<T, F> {
         self
     }
 }

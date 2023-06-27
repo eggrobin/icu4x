@@ -18,8 +18,8 @@ mod reference {
     #[derive(Debug, Clone, PartialEq, Deserialize)]
     #[cfg_attr(feature = "datagen", derive(Serialize))]
     struct PatternForSerde {
-        pub items: Vec<PatternItem>,
-        pub(crate) time_granularity: TimeGranularity,
+        items: Vec<PatternItem>,
+        time_granularity: TimeGranularity,
     }
 
     impl From<PatternForSerde> for Pattern {
@@ -57,7 +57,7 @@ mod reference {
             // Parse a string into a list of fields.
             pattern_string.parse().map_err(|err| {
                 de::Error::invalid_value(
-                    de::Unexpected::Other(&format!("{}", err)),
+                    de::Unexpected::Other(&format!("{err}")),
                     &"a valid UTS 35 pattern string",
                 )
             })
@@ -129,22 +129,13 @@ mod runtime {
     struct PatternForSerde<'data> {
         #[serde(borrow)]
         pub items: ZeroVec<'data, PatternItem>,
-        pub(crate) time_granularity: TimeGranularity,
+        pub time_granularity: TimeGranularity,
     }
 
     impl<'data> From<PatternForSerde<'data>> for Pattern<'data> {
         fn from(pfs: PatternForSerde<'data>) -> Self {
             Self {
                 items: pfs.items,
-                time_granularity: pfs.time_granularity,
-            }
-        }
-    }
-
-    impl<'data> From<&Pattern<'data>> for PatternForSerde<'data> {
-        fn from(pfs: &Pattern<'data>) -> Self {
-            Self {
-                items: pfs.items.clone(),
                 time_granularity: pfs.time_granularity,
             }
         }
@@ -195,7 +186,10 @@ mod runtime {
             if serializer.is_human_readable() {
                 serializer.serialize_str(&self.to_string())
             } else {
-                let pfs = PatternForSerde::from(self);
+                let pfs = PatternForSerde {
+                    items: self.items.clone(),
+                    time_granularity: self.time_granularity,
+                };
                 pfs.serialize(serializer)
             }
         }
@@ -403,9 +397,9 @@ mod runtime {
                 E: de::Error,
             {
                 // Parse a string into a list of fields.
-                #[allow(clippy::expect_used)]
-                // TODO(#1668) Clippy exceptions need docs or fixing.
-                let pattern = pattern_string.parse().expect("Failed to parse pattern");
+                let pattern = pattern_string
+                    .parse()
+                    .map_err(|_| E::custom("Failed to parse pattern"))?;
                 Ok(GenericPattern::from(&pattern))
             }
         }

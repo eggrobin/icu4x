@@ -2,7 +2,19 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
+//! 🚧 \[Experimental\] Options for constructing DateTimeFormatter objects by each component style.
+//!
+//! <div class="stab unstable">
+//! 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+//! including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+//! of the icu meta-crate. Use with caution.
+//! <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+//! </div>
+//!
 //! # Implementation status
+//!
+//! This module is available by enabling the `"experimental"` Cargo feature.
+//! It may change in breaking ways, including across minor releases.
 //!
 //! This is currently only a partial implementation of the UTS-35 skeleton matching algorithm.
 //!
@@ -41,8 +53,8 @@
 //! # Examples
 //!
 //! ```
-//! use icu::datetime::DateTimeFormatOptions;
 //! use icu::datetime::options::components;
+//! use icu::datetime::DateTimeFormatterOptions;
 //!
 //! let mut bag = components::Bag::default();
 //! bag.year = Some(components::Year::Numeric);
@@ -53,25 +65,27 @@
 //! bag.minute = Some(components::Numeric::TwoDigit);
 //!
 //! // The options can be created manually.
-//! let options = DateTimeFormatOptions::Components(bag);
+//! let options = DateTimeFormatterOptions::Components(bag);
 //! ```
 //!
 //! Or the options can be inferred through the `.into()` trait.
 //!
 //! ```
-//! use icu::datetime::DateTimeFormatOptions;
 //! use icu::datetime::options::components;
-//! let options: DateTimeFormatOptions = components::Bag::default().into();
+//! use icu::datetime::DateTimeFormatterOptions;
+//! let options: DateTimeFormatterOptions = components::Bag::default().into();
 //! ```
 //!
-//! *Note*: The exact result returned from [`DateTimeFormat`](crate::DateTimeFormat) is a subject to change over
+//! *Note*: The exact result returned from [`TypedDateTimeFormatter`](crate::TypedDateTimeFormatter) is a subject to change over
 //! time. Formatted result should be treated as opaque and displayed to the user as-is,
 //! and it is strongly recommended to never write tests that expect a particular formatted output.
+
 use crate::{
     fields::{self, Field, FieldLength, FieldSymbol},
     pattern::{runtime::PatternPlurals, PatternItem},
 };
 
+#[cfg(feature = "experimental")]
 use alloc::vec::Vec;
 
 use super::preferences;
@@ -79,6 +93,13 @@ use super::preferences;
 use serde::{Deserialize, Serialize};
 
 /// See the [module-level](./index.html) docs for more information.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, PartialEq, Default, Copy)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -102,6 +123,8 @@ pub struct Bag {
     pub minute: Option<Numeric>,
     /// Include the second such as "3" or "03".
     pub second: Option<Numeric>,
+    /// Specify the number of fractional second digits such as 1 (".3") or 3 (".003").
+    pub fractional_second: Option<u8>,
 
     /// Include the time zone, such as "GMT+05:00".
     pub time_zone_name: Option<TimeZoneName>,
@@ -122,6 +145,7 @@ impl Bag {
     /// Converts the components::Bag into a Vec<Field>. The fields will be ordered in from most
     /// significant field to least significant. This is the order the fields are listed in
     /// the UTS 35 table - https://unicode.org/reports/tr35/tr35-dates.html#Date_Field_Symbol_Table
+    #[cfg(any(test, feature = "experimental"))] // only used in test and experimental code
     pub(crate) fn to_vec_fields(&self) -> Vec<Field> {
         let mut fields = Vec::new();
         if let Some(era) = self.era {
@@ -309,8 +333,15 @@ impl Bag {
                     Numeric::TwoDigit => FieldLength::TwoDigit,
                 },
             });
-            // S - Not used in skeletons.
             // A - Milliseconds in day. Not used in skeletons.
+        }
+
+        if let Some(precision) = self.fractional_second {
+            // S - Fractional seconds.
+            fields.push(Field {
+                symbol: FieldSymbol::Second(fields::Second::FractionalSecond),
+                length: FieldLength::Fixed(precision),
+            });
         }
 
         if self.time_zone_name.is_some() {
@@ -321,16 +352,13 @@ impl Bag {
             });
         }
 
-        debug_assert!(
-            fields.windows(2).all(|f| {
-                #[allow(clippy::indexing_slicing)]
-                // TODO(#1668) Clippy exceptions need docs or fixing.
-                // Change to code redired as clippy on statements arex experimental
-                let comp = f[0] < f[1];
-                comp
-            }),
-            "The fields are sorted and unique."
-        );
+        {
+            #![allow(clippy::indexing_slicing)] // debug
+            debug_assert!(
+                fields.windows(2).all(|f| f[0] < f[1]),
+                "The fields are sorted and unique."
+            );
+        }
 
         fields
     }
@@ -338,6 +366,13 @@ impl Bag {
 
 /// A numeric component for the `components::`[`Bag`]. It is used for the year, day, hour, minute,
 /// and second.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -353,6 +388,13 @@ pub enum Numeric {
 }
 
 /// A text component for the `components::`[`Bag`]. It is used for the era and weekday.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -370,6 +412,13 @@ pub enum Text {
 }
 
 /// Options for displaying a Year for the `components::`[`Bag`].
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -391,6 +440,13 @@ pub enum Year {
 }
 
 /// Options for displaying a Month for the `components::`[`Bag`].
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -417,6 +473,13 @@ pub enum Month {
 /// Options for displaying the current week number for the `components::`[`Bag`].
 ///
 /// Week numbers are relative to either a month or year, e.g. 'week 3 of January' or 'week 40 of 2000'.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -434,6 +497,13 @@ pub enum Week {
 }
 
 /// Options for displaying the current day of the month or year.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, PartialEq, Copy)]
 #[cfg_attr(
     feature = "serde",
@@ -454,6 +524,13 @@ pub enum Day {
 ///
 /// Note that the initial implementation is focusing on only supporting ECMA-402 compatible
 /// options.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
     feature = "serde",
@@ -463,24 +540,21 @@ pub enum Day {
 #[non_exhaustive]
 pub enum TimeZoneName {
     // UTS-35 fields: z..zzz
-    //
     /// Short localized form, without the location. (e.g.: PST, GMT-8)
     ShortSpecific,
 
     // UTS-35 fields: zzzz
     // Per UTS-35: [long form] specific non-location (falling back to long localized GMT)
-    //
     /// Long localized form, without the location (e.g., Pacific Standard Time, Nordamerikanische Westküsten-Normalzeit)
     LongSpecific,
 
     // UTS-35 fields: O, OOOO
     // Per UTS-35: The long localized GMT format. This is equivalent to the "OOOO" specifier
     // Per UTS-35: Short localized GMT format (e.g., GMT-8)
-    // This enum variant is combining the two types of fields, as the CLDR specifices the preferred
+    // This enum variant is combining the two types of fields, as the CLDR specifies the preferred
     // hour-format for the locale, and ICU4X uses the preferred one.
     //   e.g.
     //   https://github.com/unicode-org/cldr-json/blob/c23635f13946292e40077fd62aee6a8e122e7689/cldr-json/cldr-dates-full/main/es-MX/timeZoneNames.json#L13
-    //
     /// Localized GMT format, in the locale's preferred hour format. (e.g., GMT-0800),
     GmtOffset,
 
@@ -524,7 +598,7 @@ impl From<TimeZoneName> for Field {
     }
 }
 
-/// Get the resolved components for a DateTimeFormat, via the PatternPlurals. In the case of
+/// Get the resolved components for a TypedDateTimeFormatter, via the PatternPlurals. In the case of
 /// plurals resolve off of the required `other` pattern.
 impl<'data> From<&PatternPlurals<'data>> for Bag {
     fn from(other: &PatternPlurals) -> Self {
@@ -668,18 +742,24 @@ impl<'data> From<&PatternPlurals<'data>> for Bag {
                     });
                 }
                 FieldSymbol::Second(second) => {
-                    bag.second = Some(match second {
-                        fields::Second::Second => match field.length {
-                            FieldLength::TwoDigit => Numeric::TwoDigit,
-                            _ => Numeric::Numeric,
-                        },
+                    match second {
+                        fields::Second::Second => {
+                            bag.second = Some(match field.length {
+                                FieldLength::TwoDigit => Numeric::TwoDigit,
+                                _ => Numeric::Numeric,
+                            });
+                        }
                         fields::Second::FractionalSecond => {
-                            unimplemented!("fields::Second::FractionalSecond. #1360")
+                            if let FieldLength::Fixed(p) = field.length {
+                                if p > 0 {
+                                    bag.fractional_second = Some(p);
+                                }
+                            }
                         }
                         fields::Second::Millisecond => {
-                            unimplemented!("fields::Second::Millisecond")
+                            // fields::Second::Millisecond is not implemented (#1834)
                         }
-                    });
+                    }
                 }
                 FieldSymbol::TimeZone(time_zone_name) => {
                     bag.time_zone_name = Some(match time_zone_name {
@@ -724,6 +804,7 @@ mod test {
             hour: Some(Numeric::Numeric),
             minute: Some(Numeric::Numeric),
             second: Some(Numeric::Numeric),
+            fractional_second: Some(3),
 
             ..Default::default()
         };
@@ -737,6 +818,11 @@ mod test {
                 (Symbol::Hour(fields::Hour::H23), Length::One).into(),
                 (Symbol::Minute, Length::One).into(),
                 (Symbol::Second(fields::Second::Second), Length::One).into(),
+                (
+                    Symbol::Second(fields::Second::FractionalSecond),
+                    Length::Fixed(3)
+                )
+                    .into(),
             ]
         );
     }

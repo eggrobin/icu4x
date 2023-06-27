@@ -3,23 +3,18 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 // Provider structs must be stable
-#![allow(clippy::exhaustive_structs)]
+#![allow(clippy::exhaustive_structs, clippy::exhaustive_enums)]
 
-//! Data provider struct definitions for this ICU4X component.
+//! 🚧 \[Unstable\] Data provider struct definitions for this ICU4X component.
+//!
+//! <div class="stab unstable">
+//! 🚧 This code is considered unstable; it may change at any time, in breaking or non-breaking ways,
+//! including in SemVer minor releases. While the serde representation of data structs is guaranteed
+//! to be stable, their Rust representation might not be. Use with caution.
+//! </div>
 //!
 //! Read more about data providers: [`icu_provider`]
 
-#[cfg(doc)]
-use icu_provider::prelude::ResourceKey;
-
-/// Data providers for the Gregorian Calendar.
 pub mod calendar;
-
-/// Data providers for time zones.
-pub mod time_zones;
-
-/// Provider for week data.
-pub mod week_data;
-
-/// Traits for managing data needed by [`DateTimeFormat`](crate::DateTimeFormat).
 pub(crate) mod date_time;
+pub mod time_zones;

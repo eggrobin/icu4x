@@ -2,145 +2,114 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-//! This module contains types and implementations for the ISO calendar
+//! This module contains types and implementations for the ISO calendar.
+//!
+//! ```rust
+//! use icu::calendar::{Date, DateTime};
+//!
+//! // `Date` type
+//! let date_iso = Date::try_new_iso_date(1970, 1, 2)
+//!     .expect("Failed to initialize ISO Date instance.");
+//!
+//! // `DateTime` type
+//! let datetime_iso = DateTime::try_new_iso_datetime(1970, 1, 2, 13, 1, 0)
+//!     .expect("Failed to initialize ISO DateTime instance.");
+//!
+//! // `Date` checks
+//! assert_eq!(date_iso.year().number, 1970);
+//! assert_eq!(date_iso.month().ordinal, 1);
+//! assert_eq!(date_iso.day_of_month().0, 2);
+//!
+//! // `DateTime` type
+//! assert_eq!(datetime_iso.date.year().number, 1970);
+//! assert_eq!(datetime_iso.date.month().ordinal, 1);
+//! assert_eq!(datetime_iso.date.day_of_month().0, 2);
+//! assert_eq!(datetime_iso.time.hour.number(), 13);
+//! assert_eq!(datetime_iso.time.minute.number(), 1);
+//! assert_eq!(datetime_iso.time.second.number(), 0);
+//! ```
 
-use crate::{types, Calendar, Date, DateDuration, DateDurationUnit, DateTime, DateTimeError};
-use core::convert::{TryFrom, TryInto};
+use crate::any_calendar::AnyCalendarKind;
+use crate::calendar_arithmetic::{ArithmeticDate, CalendarArithmetic};
+use crate::helpers::{div_rem_euclid64, i64_to_i32, i64_to_saturated_i32, quotient64, I32Result};
+use crate::rata_die::RataDie;
+use crate::{types, Calendar, CalendarError, Date, DateDuration, DateDurationUnit, DateTime};
 use tinystr::tinystr;
 
 // The georgian epoch is equivalent to first day in fixed day measurement
-const EPOCH: i32 = 1;
+const EPOCH: RataDie = RataDie::new(1);
 
-#[derive(Copy, Clone, Debug, Default)]
+/// The [ISO Calendar]
+///
+/// The [ISO Calendar] is a standardized solar calendar with twelve months.
+/// It is identical to the Gregorian calendar, except it uses negative years for years before 1 CE,
+/// and may have differing formatting data for a given locale.
+///
+/// This type can be used with [`Date`] or [`DateTime`] to represent dates in this calendar.
+///
+/// [ISO Calendar]: https://en.wikipedia.org/wiki/ISO_8601#Dates
+///
+/// # Era codes
+///
+/// This calendar supports one era, `"default"`
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[allow(clippy::exhaustive_structs)] // this type is stable
-/// The ISO Calendar
 pub struct Iso;
 
-/// A 1-indexed representation of an ISO day
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct IsoDay(u8);
-/// A 1-indexed representation of an ISO month
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct IsoMonth(u8);
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-#[allow(clippy::exhaustive_structs)] // newtype
-/// An ISO year. Year 0 == 1 BCE
-pub struct IsoYear(pub i32);
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
+/// The inner date type used for representing [`Date`]s of [`Iso`]. See [`Date`] and [`Iso`] for more details.
+pub struct IsoDateInner(pub(crate) ArithmeticDate<Iso>);
 
-impl TryFrom<u8> for IsoDay {
-    type Error = DateTimeError;
-    fn try_from(int: u8) -> Result<Self, DateTimeError> {
-        if !(1..=31).contains(&int) {
-            return Err(DateTimeError::OutOfRange);
-        }
-        Ok(Self(int))
-    }
-}
-
-impl TryFrom<u8> for IsoMonth {
-    type Error = DateTimeError;
-    fn try_from(int: u8) -> Result<Self, DateTimeError> {
-        if !(1..=12).contains(&int) {
-            return Err(DateTimeError::OutOfRange);
-        }
-        Ok(Self(int))
-    }
-}
-
-impl From<i32> for IsoYear {
-    fn from(int: i32) -> Self {
-        Self(int)
-    }
-}
-
-impl From<IsoDay> for u8 {
-    fn from(day: IsoDay) -> Self {
-        day.0
-    }
-}
-
-impl From<IsoMonth> for u8 {
-    fn from(month: IsoMonth) -> Self {
-        month.0
-    }
-}
-
-impl From<IsoYear> for i32 {
-    fn from(year: IsoYear) -> Self {
-        year.0
-    }
-}
-
-impl From<IsoYear> for types::Year {
-    fn from(year: IsoYear) -> types::Year {
-        types::Year {
-            era: types::Era(tinystr!(16, "default")),
-            number: year.0,
-            related_iso: year.0,
+impl CalendarArithmetic for Iso {
+    fn month_days(year: i32, month: u8) -> u8 {
+        match month {
+            4 | 6 | 9 | 11 => 30,
+            2 if Self::is_leap_year(year) => 29,
+            2 => 28,
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            _ => 0,
         }
     }
-}
 
-impl From<IsoMonth> for types::Month {
-    fn from(month: IsoMonth) -> types::Month {
-        types::Month {
-            number: month.0 as u32,
-            // TODO(#486): Implement month codes
-            code: types::MonthCode(tinystr!(8, "TODO")),
-        }
+    fn months_for_every_year(_: i32) -> u8 {
+        12
     }
-}
 
-impl From<IsoDay> for types::DayOfMonth {
-    fn from(day: IsoDay) -> types::DayOfMonth {
-        types::DayOfMonth(day.0 as u32)
+    fn is_leap_year(year: i32) -> bool {
+        year % 4 == 0 && (year % 400 == 0 || year % 100 != 0)
     }
-}
 
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-/// The inner date type used for representing Date<Iso>
-pub struct IsoDateInner {
-    pub(crate) day: IsoDay,
-    pub(crate) month: IsoMonth,
-    pub(crate) year: IsoYear,
-}
+    fn last_month_day_in_year(_year: i32) -> (u8, u8) {
+        (12, 31)
+    }
 
-impl IsoDateInner {
-    pub fn add_months(&mut self, months: i32) {
-        // Get a zero-indexed new month
-        let new_month = (self.month.0 as i32 - 1) + months;
-        if new_month >= 0 {
-            self.year.0 += new_month / 12;
-            self.month.0 = ((new_month % 12) + 1) as u8;
+    fn days_in_provided_year(year: i32) -> u32 {
+        if Self::is_leap_year(year) {
+            366
         } else {
-            // subtract full years
-            self.year.0 -= (-new_month) / 12;
-            // subtract a partial year
-            self.year.0 -= 1;
-            // adding 13 since months are 1-indexed
-            self.month.0 = (13 + (new_month % 12)) as u8
-        }
-    }
-
-    pub(crate) fn jan_1(year: IsoYear) -> Self {
-        Self {
-            day: IsoDay(1),
-            month: IsoMonth(1),
-            year,
-        }
-    }
-
-    pub(crate) fn dec_31(year: IsoYear) -> Self {
-        Self {
-            day: IsoDay(31),
-            month: IsoMonth(12),
-            year,
+            365
         }
     }
 }
 
 impl Calendar for Iso {
     type DateInner = IsoDateInner;
+    /// Construct a date from era/month codes and fields
+    fn date_from_codes(
+        &self,
+        era: types::Era,
+        year: i32,
+        month_code: types::MonthCode,
+        day: u8,
+    ) -> Result<Self::DateInner, CalendarError> {
+        if era.0 != tinystr!(16, "default") {
+            return Err(CalendarError::UnknownEra(era.0, self.debug_name()));
+        }
+
+        ArithmeticDate::new_from_solar(self, year, month_code, day).map(IsoDateInner)
+    }
+
     fn date_from_iso(&self, iso: Date<Iso>) -> IsoDateInner {
         *iso.inner()
     }
@@ -149,20 +118,16 @@ impl Calendar for Iso {
         Date::from_raw(*date, Iso)
     }
 
-    fn months_in_year(&self, _date: &Self::DateInner) -> u8 {
-        12
+    fn months_in_year(&self, date: &Self::DateInner) -> u8 {
+        date.0.months_in_year()
     }
 
     fn days_in_year(&self, date: &Self::DateInner) -> u32 {
-        if Self::is_leap_year(date.year) {
-            366
-        } else {
-            365
-        }
+        date.0.days_in_year()
     }
 
     fn days_in_month(&self, date: &Self::DateInner) -> u8 {
-        Self::days_in_month(date.year, date.month)
+        date.0.days_in_month()
     }
 
     fn day_of_week(&self, date: &Self::DateInner) -> types::IsoWeekday {
@@ -171,17 +136,18 @@ impl Calendar for Iso {
 
         // The days of the week are the same every 400 years
         // so we normalize to the nearest multiple of 400
-        let years_since_400 = date.year.0 % 400;
+        let years_since_400 = date.0.year % 400;
         let leap_years_since_400 = years_since_400 / 4 - years_since_400 / 100;
         // The number of days to the current year
+        // Can never cause an overflow because years_since_400 has a maximum value of 399.
         let days_to_current_year = 365 * years_since_400 + leap_years_since_400;
         // The weekday offset from January 1 this year and January 1 2000
         let year_offset = days_to_current_year % 7;
 
         // Corresponding months from
         // https://en.wikipedia.org/wiki/Determination_of_the_day_of_the_week#Corresponding_months
-        let month_offset = if Self::is_leap_year(date.year) {
-            match date.month.0 {
+        let month_offset = if Self::is_leap_year(date.0.year) {
+            match date.0.month {
                 10 => 0,
                 5 => 1,
                 2 | 8 => 2,
@@ -192,7 +158,7 @@ impl Calendar for Iso {
                 _ => unreachable!(),
             }
         } else {
-            match date.month.0 {
+            match date.0.month {
                 1 | 10 => 0,
                 5 => 1,
                 8 => 2,
@@ -203,53 +169,18 @@ impl Calendar for Iso {
                 _ => unreachable!(),
             }
         };
-
         let january_1_2000 = 5; // Saturday
-        let day_offset = (january_1_2000 + year_offset + month_offset + date.day.0 as i32) % 7;
+        let day_offset = (january_1_2000 + year_offset + month_offset + date.0.day as i32) % 7;
 
         // We calculated in a zero-indexed fashion, but ISO specifies one-indexed
         types::IsoWeekday::from((day_offset + 1) as usize)
     }
 
-    fn offset_date(&self, date: &mut Self::DateInner, mut offset: DateDuration<Self>) {
-        date.year.0 += offset.years;
-        date.add_months(offset.months);
-        offset.months = 0;
-
-        offset.days += offset.weeks * 7;
-
-        // Normalize date to beginning of month
-        offset.days += date.day.0 as i32 - 1;
-        date.day.0 = 1;
-
-        while offset.days != 0 {
-            if offset.days < 0 {
-                date.add_months(-1);
-                let month_days = self.days_in_month(date);
-                if (-offset.days) > month_days as i32 {
-                    offset.days += month_days as i32;
-                } else {
-                    // Add 1 since we are subtracting from the first day of the
-                    // *next* month
-                    date.day.0 = 1 + (month_days as i8 + offset.days as i8) as u8;
-                    offset.days = 0;
-                }
-            } else {
-                let month_days = self.days_in_month(date);
-                // >= because we date.day is 1, so adding the number of days in the month
-                // will still have the same effect
-                if offset.days >= month_days as i32 {
-                    date.add_months(1);
-                    offset.days -= month_days as i32;
-                } else {
-                    date.day.0 += offset.days as u8;
-                    offset.days = 0;
-                }
-            }
-        }
+    fn offset_date(&self, date: &mut Self::DateInner, offset: DateDuration<Self>) {
+        date.0.offset_date(offset);
     }
 
-    #[allow(clippy::field_reassign_with_default)] // it's more clear this way
+    #[allow(clippy::field_reassign_with_default)]
     fn until(
         &self,
         date1: &Self::DateInner,
@@ -258,90 +189,173 @@ impl Calendar for Iso {
         _largest_unit: DateDurationUnit,
         _smallest_unit: DateDurationUnit,
     ) -> DateDuration<Self> {
-        let mut difference = DateDuration::default();
-        // TODO (Manishearth) handle the unit bounds and rounding behavior
-        // (perhaps share code with icu_datetime)
-        difference.years = date1.year.0 - date2.year.0;
-        difference.months = date1.month.0 as i32 - date2.month.0 as i32;
-        difference.days = date1.day.0 as i32 - date2.day.0 as i32;
-
-        difference
+        date1.0.until(date2.0, _largest_unit, _smallest_unit)
     }
 
     /// The calendar-specific year represented by `date`
-    fn year(&self, date: &Self::DateInner) -> types::Year {
-        date.year.into()
+    fn year(&self, date: &Self::DateInner) -> types::FormattableYear {
+        Self::year_as_iso(date.0.year)
     }
 
     /// The calendar-specific month represented by `date`
-    fn month(&self, date: &Self::DateInner) -> types::Month {
-        date.month.into()
+    fn month(&self, date: &Self::DateInner) -> types::FormattableMonth {
+        date.0.solar_month()
     }
 
     /// The calendar-specific day-of-month represented by `date`
     fn day_of_month(&self, date: &Self::DateInner) -> types::DayOfMonth {
-        date.day.into()
+        date.0.day_of_month()
     }
 
-    /// Information of the day of the year
     fn day_of_year_info(&self, date: &Self::DateInner) -> types::DayOfYearInfo {
-        let prev_year = IsoYear(date.year.0 - 1);
-        let next_year = IsoYear(date.year.0 + 1);
+        let prev_year = date.0.year.saturating_sub(1);
+        let next_year = date.0.year.saturating_add(1);
         types::DayOfYearInfo {
-            day_of_year: Iso::day_of_year(*date),
-            days_in_year: Iso::days_in_year(date.year),
-            prev_year: prev_year.into(),
-            days_in_prev_year: Iso::days_in_year(prev_year),
-            next_year: next_year.into(),
+            day_of_year: date.0.day_of_year(),
+            days_in_year: date.0.days_in_year(),
+            prev_year: Self::year_as_iso(prev_year),
+            days_in_prev_year: Iso::days_in_year_direct(prev_year),
+            next_year: Self::year_as_iso(next_year),
         }
     }
 
     fn debug_name(&self) -> &'static str {
         "ISO"
     }
+
+    fn any_calendar_kind(&self) -> Option<AnyCalendarKind> {
+        Some(AnyCalendarKind::Iso)
+    }
 }
 
 impl Date<Iso> {
-    /// Construct a new ISO Date
-    pub fn new_iso_date(
-        year: IsoYear,
-        month: IsoMonth,
-        day: IsoDay,
-    ) -> Result<Date<Iso>, DateTimeError> {
-        if day.0 > 28 {
-            let bound = Iso::days_in_month(year, month);
-            if day.0 > bound {
-                return Err(DateTimeError::OutOfRange);
-            }
+    /// Construct a new ISO date from integers.
+    ///
+    /// ```rust
+    /// use icu::calendar::Date;
+    ///
+    /// let date_iso = Date::try_new_iso_date(1970, 1, 2)
+    ///     .expect("Failed to initialize ISO Date instance.");
+    ///
+    /// assert_eq!(date_iso.year().number, 1970);
+    /// assert_eq!(date_iso.month().ordinal, 1);
+    /// assert_eq!(date_iso.day_of_month().0, 2);
+    /// ```
+    pub fn try_new_iso_date(year: i32, month: u8, day: u8) -> Result<Date<Iso>, CalendarError> {
+        if !(1..=12).contains(&month) {
+            return Err(CalendarError::OutOfRange);
         }
-
-        Ok(Date::from_raw(IsoDateInner { day, month, year }, Iso))
+        if day == 0 || day > Iso::days_in_month(year, month) {
+            return Err(CalendarError::OutOfRange);
+        }
+        Ok(Date::from_raw(
+            IsoDateInner(ArithmeticDate::new(year, month, day)),
+            Iso,
+        ))
     }
 
-    /// Construct a new ISO date from integers
-    pub fn new_iso_date_from_integers(
-        year: i32,
-        month: u8,
-        day: u8,
-    ) -> Result<Date<Iso>, DateTimeError> {
-        Self::new_iso_date(year.into(), month.try_into()?, day.try_into()?)
+    /// Constructs an ISO date representing the UNIX epoch on January 1, 1970.
+    pub fn unix_epoch() -> Self {
+        Date::from_raw(IsoDateInner(ArithmeticDate::new(1970, 1, 1)), Iso)
     }
 }
 
 impl DateTime<Iso> {
-    /// Construct a new ISO date from integers
-    pub fn new_iso_datetime_from_integers(
+    /// Construct a new ISO datetime from integers.
+    ///
+    /// ```rust
+    /// use icu::calendar::DateTime;
+    ///
+    /// let datetime_iso = DateTime::try_new_iso_datetime(1970, 1, 2, 13, 1, 0)
+    ///     .expect("Failed to initialize ISO DateTime instance.");
+    ///
+    /// assert_eq!(datetime_iso.date.year().number, 1970);
+    /// assert_eq!(datetime_iso.date.month().ordinal, 1);
+    /// assert_eq!(datetime_iso.date.day_of_month().0, 2);
+    /// assert_eq!(datetime_iso.time.hour.number(), 13);
+    /// assert_eq!(datetime_iso.time.minute.number(), 1);
+    /// assert_eq!(datetime_iso.time.second.number(), 0);
+    /// ```
+    pub fn try_new_iso_datetime(
         year: i32,
         month: u8,
         day: u8,
         hour: u8,
         minute: u8,
         second: u8,
-    ) -> Result<DateTime<Iso>, DateTimeError> {
+    ) -> Result<DateTime<Iso>, CalendarError> {
         Ok(DateTime {
-            date: Date::new_iso_date_from_integers(year, month, day)?,
+            date: Date::try_new_iso_date(year, month, day)?,
             time: types::Time::try_new(hour, minute, second, 0)?,
         })
+    }
+
+    /// Minute count representation of calendars starting from 00:00:00 on Jan 1st, 1970.
+    ///
+    /// ```rust
+    /// use icu::calendar::DateTime;
+    ///
+    /// let today = DateTime::try_new_iso_datetime(2020, 2, 29, 0, 0, 0).unwrap();
+    ///
+    /// assert_eq!(today.minutes_since_local_unix_epoch(), 26382240);
+    /// assert_eq!(
+    ///     DateTime::from_minutes_since_local_unix_epoch(26382240),
+    ///     today
+    /// );
+    ///
+    /// let today = DateTime::try_new_iso_datetime(1970, 1, 1, 0, 0, 0).unwrap();
+    ///
+    /// assert_eq!(today.minutes_since_local_unix_epoch(), 0);
+    /// assert_eq!(DateTime::from_minutes_since_local_unix_epoch(0), today);
+    /// ```
+    pub fn minutes_since_local_unix_epoch(&self) -> i32 {
+        let minutes_a_hour = 60;
+        let hours_a_day = 24;
+        let minutes_a_day = minutes_a_hour * hours_a_day;
+        let unix_epoch = Iso::fixed_from_iso(Date::unix_epoch().inner);
+        let result = (Iso::fixed_from_iso(*self.date.inner()) - unix_epoch) * minutes_a_day
+            + i64::from(self.time.hour.number()) * minutes_a_hour
+            + i64::from(self.time.minute.number());
+        i64_to_saturated_i32(result)
+    }
+
+    /// Convert minute count since 00:00:00 on Jan 1st, 1970 to ISO Date.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use icu::calendar::DateTime;
+    ///
+    /// // After Unix Epoch
+    /// let today = DateTime::try_new_iso_datetime(2020, 2, 29, 0, 0, 0).unwrap();
+    ///
+    /// assert_eq!(today.minutes_since_local_unix_epoch(), 26382240);
+    /// assert_eq!(
+    ///     DateTime::from_minutes_since_local_unix_epoch(26382240),
+    ///     today
+    /// );
+    ///
+    /// // Unix Epoch
+    /// let today = DateTime::try_new_iso_datetime(1970, 1, 1, 0, 0, 0).unwrap();
+    ///
+    /// assert_eq!(today.minutes_since_local_unix_epoch(), 0);
+    /// assert_eq!(DateTime::from_minutes_since_local_unix_epoch(0), today);
+    ///
+    /// // Before Unix Epoch
+    /// let today = DateTime::try_new_iso_datetime(1967, 4, 6, 20, 40, 0).unwrap();
+    ///
+    /// assert_eq!(today.minutes_since_local_unix_epoch(), -1440200);
+    /// assert_eq!(
+    ///     DateTime::from_minutes_since_local_unix_epoch(-1440200),
+    ///     today
+    /// );
+    /// ```
+    pub fn from_minutes_since_local_unix_epoch(minute: i32) -> DateTime<Iso> {
+        let (time, extra_days) = types::Time::from_minute_with_remainder_days(minute);
+        let unix_epoch = Date::unix_epoch();
+        let unix_epoch_days = Iso::fixed_from_iso(unix_epoch.inner);
+        let date = Iso::iso_from_fixed(unix_epoch_days + extra_days as i64);
+        DateTime { date, time }
     }
 }
 
@@ -351,14 +365,9 @@ impl Iso {
         Self
     }
 
-    /// Check if a given ISO year is a leap year
-    pub fn is_leap_year(year: IsoYear) -> bool {
-        year.0 % 4 == 0 && (year.0 % 400 == 0 || year.0 % 100 != 0)
-    }
-
     /// Count the number of days in a given month/year combo
-    fn days_in_month(year: IsoYear, month: IsoMonth) -> u8 {
-        match month.0 {
+    fn days_in_month(year: i32, month: u8) -> u8 {
+        match month {
             4 | 6 | 9 | 11 => 30,
             2 if Self::is_leap_year(year) => 29,
             2 => 28,
@@ -366,7 +375,7 @@ impl Iso {
         }
     }
 
-    pub(crate) fn days_in_year(year: IsoYear) -> u32 {
+    pub(crate) fn days_in_year_direct(year: i32) -> u32 {
         if Self::is_leap_year(year) {
             366
         } else {
@@ -378,119 +387,155 @@ impl Iso {
     // The fixed calculations algorithms are from the Calendrical Calculations book.
     //
     // Lisp code reference: https://github.com/EdReingold/calendar-code2/blob/1ee51ecfaae6f856b0d7de3e36e9042100b4f424/calendar.l#L1167-L1189
-    pub(crate) fn fixed_from_iso(date: IsoDateInner) -> i32 {
+    pub(crate) fn fixed_from_iso(date: IsoDateInner) -> RataDie {
+        let prev_year = (date.0.year as i64) - 1;
         // Calculate days per year
-        let mut fixed: i32 = EPOCH - 1 + 365 * (date.year.0 - 1);
+        let mut fixed: i64 = (EPOCH.to_i64_date() - 1) + 365 * prev_year;
+        // Calculate leap year offset
+        let offset =
+            quotient64(prev_year, 4) - quotient64(prev_year, 100) + quotient64(prev_year, 400);
         // Adjust for leap year logic
-        fixed += ((date.year.0 - 1) / 4) - ((date.year.0 - 1) / 100) + ((date.year.0 - 1) / 400);
+        fixed += offset;
         // Days of current year
-        fixed += (367 * (date.month.0 as i32) - 362) / 12;
+        fixed += quotient64(367 * (date.0.month as i64) - 362, 12);
         // Leap year adjustment for the current year
-        fixed += if date.month.0 <= 2 {
+        fixed += if date.0.month <= 2 {
             0
-        } else if Self::is_leap_year(date.year) {
+        } else if Self::is_leap_year(date.0.year) {
             -1
         } else {
             -2
         };
         // Days passed in current month
-        fixed + (date.day.0 as i32)
+        fixed += date.0.day as i64;
+        RataDie::new(fixed)
     }
 
-    fn fixed_from_iso_integers(year: i32, month: i32, day: i32) -> i32 {
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        Self::fixed_from_iso(
-            *Date::new_iso_date_from_integers(year, month as u8, day as u8)
-                .unwrap()
-                .inner(),
-        )
-    }
-
-    // Lisp code reference: https://github.com/EdReingold/calendar-code2/blob/1ee51ecfaae6f856b0d7de3e36e9042100b4f424/calendar.l#L1191-L1217
-    fn iso_year_from_fixed(date: i32) -> i32 {
-        // 400 year cycles have 146097 days
-        let n_400 = date / 146097;
-        let date = date % 146097;
-
-        // 100 year cycles have 36524 days
-        let n_100 = date / 36524;
-        let date = date % 36524;
-
-        // 4 year cycles have 1461 days
-        let n_4 = date / 1461;
-        let date = date % 1461;
-
-        let n_1 = date / 365;
-
-        let year = 400 * n_400 + 100 * n_100 + 4 * n_4 + n_1;
-
-        if n_400 == 4 || n_4 == 1 {
-            year
-        } else {
-            year + 1
-        }
-    }
-
-    fn iso_new_year(year: i32) -> i32 {
-        Self::fixed_from_iso_integers(year, 1, 1)
-    }
-
-    // Lisp code reference: https://github.com/EdReingold/calendar-code2/blob/1ee51ecfaae6f856b0d7de3e36e9042100b4f424/calendar.l#L1237-L1258
-    pub(crate) fn iso_from_fixed(date: i32) -> Date<Iso> {
-        let year = Self::iso_year_from_fixed(date);
-        let prior_days = date - Self::iso_new_year(year);
-        let correction = if date < Self::fixed_from_iso_integers(year, 3, 1) {
-            0
-        } else if Self::is_leap_year(IsoYear::from(year)) {
-            1
-        } else {
-            2
-        };
-        let month = (12 * (prior_days + correction) + 373) / 367;
-        let day = date - Self::fixed_from_iso_integers(year, month, 1) + 1;
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        Date::new_iso_date_from_integers(year, month as u8, day as u8).unwrap()
+    fn fixed_from_iso_integers(year: i32, month: u8, day: u8) -> Option<RataDie> {
+        Date::try_new_iso_date(year, month, day)
+            .ok()
+            .map(|d| *d.inner())
+            .map(Self::fixed_from_iso)
     }
 
     pub(crate) fn iso_from_year_day(year: i32, year_day: u32) -> Date<Iso> {
         let mut month = 1;
         let mut day = year_day as i32;
         while month <= 12 {
-            let month_days = Self::days_in_month(IsoYear(year), IsoMonth(month)) as i32;
+            let month_days = Self::days_in_month(year, month) as i32;
             if day <= month_days {
                 break;
             } else {
+                debug_assert!(month < 12); // don't try going to month 13
                 day -= month_days;
                 month += 1;
             }
         }
+        let day = day as u8; // day <= month_days < u8::MAX
 
-        #[allow(clippy::unwrap_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        Date::new_iso_date_from_integers(year, month, day.try_into().unwrap()).unwrap()
+        #[allow(clippy::unwrap_used)] // month in 1..=12, day <= month_days
+        Date::try_new_iso_date(year, month, day).unwrap()
+    }
+
+    // Lisp code reference: https://github.com/EdReingold/calendar-code2/blob/1ee51ecfaae6f856b0d7de3e36e9042100b4f424/calendar.l#L1191-L1217
+    fn iso_year_from_fixed(date: RataDie) -> i64 {
+        // Shouldn't overflow because it's not possbile to construct extreme values of RataDie
+        let date = date - EPOCH;
+
+        // 400 year cycles have 146097 days
+        let (n_400, date) = div_rem_euclid64(date, 146097);
+
+        // 100 year cycles have 36524 days
+        let (n_100, date) = div_rem_euclid64(date, 36524);
+
+        // 4 year cycles have 1461 days
+        let (n_4, date) = div_rem_euclid64(date, 1461);
+
+        let n_1 = quotient64(date, 365);
+
+        let year = 400 * n_400 + 100 * n_100 + 4 * n_4 + n_1;
+
+        if n_100 == 4 || n_1 == 4 {
+            year
+        } else {
+            year + 1
+        }
+    }
+
+    fn iso_new_year(year: i32) -> RataDie {
+        #[allow(clippy::unwrap_used)] // valid day and month
+        Self::fixed_from_iso_integers(year, 1, 1).unwrap()
+    }
+
+    // Lisp code reference: https://github.com/EdReingold/calendar-code2/blob/1ee51ecfaae6f856b0d7de3e36e9042100b4f424/calendar.l#L1237-L1258
+    pub(crate) fn iso_from_fixed(date: RataDie) -> Date<Iso> {
+        let year = Self::iso_year_from_fixed(date);
+        let year = match i64_to_i32(year) {
+            I32Result::BelowMin(_) => {
+                return Date::from_raw(IsoDateInner(ArithmeticDate::min_date()), Iso)
+            }
+            I32Result::AboveMax(_) => {
+                return Date::from_raw(IsoDateInner(ArithmeticDate::max_date()), Iso)
+            }
+            I32Result::WithinRange(y) => y,
+        };
+        // Calculates the prior days of the adjusted year, then applies a correction based on leap year conditions for the correct ISO date conversion.
+        let prior_days = date - Self::iso_new_year(year);
+        #[allow(clippy::unwrap_used)] // valid day and month
+        let correction = if date < Self::fixed_from_iso_integers(year, 3, 1).unwrap() {
+            0
+        } else if Self::is_leap_year(year) {
+            1
+        } else {
+            2
+        };
+        let month = quotient64(12 * (prior_days + correction) + 373, 367) as u8; // in 1..12 < u8::MAX
+        #[allow(clippy::unwrap_used)] // valid day and month
+        let day = (date - Self::fixed_from_iso_integers(year, month, 1).unwrap() + 1) as u8; // <= days_in_month < u8::MAX
+        #[allow(clippy::unwrap_used)] // valid day and month
+        Date::try_new_iso_date(year, month, day).unwrap()
     }
 
     pub(crate) fn day_of_year(date: IsoDateInner) -> u32 {
         // Cumulatively how much are dates in each month
         // offset from "30 days in each month" (in non leap years)
         let month_offset = [0, 1, -1, 0, 0, 1, 1, 2, 3, 3, 4, 4];
-        #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        let mut offset = month_offset[date.month.0 as usize - 1];
-        if Self::is_leap_year(date.year) && date.month.0 > 2 {
+        #[allow(clippy::indexing_slicing)] // date.0.month in 1..=12
+        let mut offset = month_offset[date.0.month as usize - 1];
+        if Self::is_leap_year(date.0.year) && date.0.month > 2 {
             // Months after February in a leap year are offset by one less
             offset += 1;
         }
-        let prev_month_days = (30 * (date.month.0 as i32 - 1) + offset) as u32;
+        let prev_month_days = (30 * (date.0.month as i32 - 1) + offset) as u32;
 
-        prev_month_days + date.day.0 as u32
+        prev_month_days + date.0.day as u32
+    }
+
+    /// Wrap the year in the appropriate era code
+    fn year_as_iso(year: i32) -> types::FormattableYear {
+        types::FormattableYear {
+            era: types::Era(tinystr!(16, "default")),
+            number: year,
+            related_iso: None,
+        }
+    }
+}
+
+impl IsoDateInner {
+    pub(crate) fn jan_1(year: i32) -> Self {
+        Self(ArithmeticDate::new(year, 1, 1))
+    }
+    pub(crate) fn dec_31(year: i32) -> Self {
+        Self(ArithmeticDate::new(year, 12, 1))
     }
 }
 
 impl From<&'_ IsoDateInner> for crate::provider::EraStartDate {
     fn from(other: &'_ IsoDateInner) -> Self {
         Self {
-            year: other.year.0,
-            month: other.month.0,
-            day: other.day.0,
+            year: other.0.year,
+            month: other.0.month,
+            day: other.0.day,
         }
     }
 }
@@ -501,26 +546,174 @@ mod test {
     use crate::types::IsoWeekday;
 
     #[test]
+    fn iso_overflow() {
+        #[derive(Debug)]
+        struct TestCase {
+            year: i32,
+            month: u8,
+            day: u8,
+            fixed: RataDie,
+            saturating: bool,
+        }
+        // Calculates the max possible year representable using i32::MAX as the fixed date
+        let max_year = Iso::iso_from_fixed(RataDie::new(i32::MAX as i64))
+            .year()
+            .number;
+
+        // Calculates the minimum possible year representable using i32::MIN as the fixed date
+        // *Cannot be tested yet due to hard coded date not being available yet (see line 436)
+        let min_year = -5879610;
+
+        let cases = [
+            TestCase {
+                // Earliest date that can be represented before causing a minimum overflow
+                year: min_year,
+                month: 6,
+                day: 22,
+                fixed: RataDie::new(i32::MIN as i64),
+                saturating: false,
+            },
+            TestCase {
+                year: min_year,
+                month: 6,
+                day: 23,
+                fixed: RataDie::new(i32::MIN as i64 + 1),
+                saturating: false,
+            },
+            TestCase {
+                year: min_year,
+                month: 6,
+                day: 21,
+                fixed: RataDie::new(i32::MIN as i64 - 1),
+                saturating: false,
+            },
+            TestCase {
+                year: min_year,
+                month: 12,
+                day: 31,
+                fixed: RataDie::new(-2147483456),
+                saturating: false,
+            },
+            TestCase {
+                year: min_year + 1,
+                month: 1,
+                day: 1,
+                fixed: RataDie::new(-2147483455),
+                saturating: false,
+            },
+            TestCase {
+                year: max_year,
+                month: 6,
+                day: 11,
+                fixed: RataDie::new(i32::MAX as i64 - 30),
+                saturating: false,
+            },
+            TestCase {
+                year: max_year,
+                month: 7,
+                day: 9,
+                fixed: RataDie::new(i32::MAX as i64 - 2),
+                saturating: false,
+            },
+            TestCase {
+                year: max_year,
+                month: 7,
+                day: 10,
+                fixed: RataDie::new(i32::MAX as i64 - 1),
+                saturating: false,
+            },
+            TestCase {
+                // Latest date that can be represented before causing a maximum overflow
+                year: max_year,
+                month: 7,
+                day: 11,
+                fixed: RataDie::new(i32::MAX as i64),
+                saturating: false,
+            },
+            TestCase {
+                year: max_year,
+                month: 7,
+                day: 12,
+                fixed: RataDie::new(i32::MAX as i64 + 1),
+                saturating: false,
+            },
+            TestCase {
+                year: i32::MIN,
+                month: 1,
+                day: 2,
+                fixed: RataDie::new(-784352296669),
+                saturating: false,
+            },
+            TestCase {
+                year: i32::MIN,
+                month: 1,
+                day: 1,
+                fixed: RataDie::new(-784352296670),
+                saturating: false,
+            },
+            TestCase {
+                year: i32::MIN,
+                month: 1,
+                day: 1,
+                fixed: RataDie::new(-784352296671),
+                saturating: true,
+            },
+            TestCase {
+                year: i32::MAX,
+                month: 12,
+                day: 30,
+                fixed: RataDie::new(784352295938),
+                saturating: false,
+            },
+            TestCase {
+                year: i32::MAX,
+                month: 12,
+                day: 31,
+                fixed: RataDie::new(784352295939),
+                saturating: false,
+            },
+            TestCase {
+                year: i32::MAX,
+                month: 12,
+                day: 31,
+                fixed: RataDie::new(784352295940),
+                saturating: true,
+            },
+        ];
+
+        for case in cases {
+            let date = Date::try_new_iso_date(case.year, case.month, case.day).unwrap();
+            if !case.saturating {
+                assert_eq!(Iso::fixed_from_iso(date.inner), case.fixed, "{case:?}");
+            }
+            assert_eq!(Iso::iso_from_fixed(case.fixed), date, "{case:?}");
+        }
+    }
+
+    // Calculates the minimum possible year representable using a large negative fixed date
+    #[test]
+    fn min_year() {
+        assert_eq!(
+            Iso::iso_from_fixed(RataDie::big_negative()).year().number,
+            i32::MIN
+        );
+    }
+
+    #[test]
     fn test_day_of_week() {
         // June 23, 2021 is a Wednesday
         assert_eq!(
-            Date::new_iso_date_from_integers(2021, 6, 23)
-                .unwrap()
-                .day_of_week(),
+            Date::try_new_iso_date(2021, 6, 23).unwrap().day_of_week(),
             IsoWeekday::Wednesday,
         );
         // Feb 2, 1983 was a Wednesday
         assert_eq!(
-            Date::new_iso_date_from_integers(1983, 2, 2)
-                .unwrap()
-                .day_of_week(),
+            Date::try_new_iso_date(1983, 2, 2).unwrap().day_of_week(),
             IsoWeekday::Wednesday,
         );
         // Jan 21, 2021 was a Tuesday
         assert_eq!(
-            Date::new_iso_date_from_integers(2020, 1, 21)
-                .unwrap()
-                .day_of_week(),
+            Date::try_new_iso_date(2020, 1, 21).unwrap().day_of_week(),
             IsoWeekday::Tuesday,
         );
     }
@@ -529,7 +722,7 @@ mod test {
     fn test_day_of_year() {
         // June 23, 2021 was day 174
         assert_eq!(
-            Date::new_iso_date_from_integers(2021, 6, 23)
+            Date::try_new_iso_date(2021, 6, 23)
                 .unwrap()
                 .day_of_year_info()
                 .day_of_year,
@@ -537,7 +730,7 @@ mod test {
         );
         // June 23, 2020 was day 175
         assert_eq!(
-            Date::new_iso_date_from_integers(2020, 6, 23)
+            Date::try_new_iso_date(2020, 6, 23)
                 .unwrap()
                 .day_of_year_info()
                 .day_of_year,
@@ -545,7 +738,7 @@ mod test {
         );
         // Feb 2, 1983 was a Wednesday
         assert_eq!(
-            Date::new_iso_date_from_integers(1983, 2, 2)
+            Date::try_new_iso_date(1983, 2, 2)
                 .unwrap()
                 .day_of_year_info()
                 .day_of_year,
@@ -557,64 +750,164 @@ mod test {
         let a = a.inner();
         let b = b.inner();
         DateDuration::new(
-            a.year.0 - b.year.0,
-            a.month.0 as i32 - b.month.0 as i32,
+            a.0.year - b.0.year,
+            a.0.month as i32 - b.0.month as i32,
             0,
-            a.day.0 as i32 - b.day.0 as i32,
+            a.0.day as i32 - b.0.day as i32,
         )
     }
 
     #[test]
     fn test_offset() {
-        let today = Date::new_iso_date_from_integers(2021, 6, 23).unwrap();
-        let today_plus_5000 = Date::new_iso_date_from_integers(2035, 3, 2).unwrap();
-        let offset = today.clone().added(DateDuration::new(0, 0, 0, 5000));
+        let today = Date::try_new_iso_date(2021, 6, 23).unwrap();
+        let today_plus_5000 = Date::try_new_iso_date(2035, 3, 2).unwrap();
+        let offset = today.added(DateDuration::new(0, 0, 0, 5000));
         assert_eq!(offset, today_plus_5000);
-        let offset = today
-            .clone()
-            .added(simple_subtract(&today_plus_5000, &today));
+        let offset = today.added(simple_subtract(&today_plus_5000, &today));
         assert_eq!(offset, today_plus_5000);
 
-        let today = Date::new_iso_date_from_integers(2021, 6, 23).unwrap();
-        let today_minus_5000 = Date::new_iso_date_from_integers(2007, 10, 15).unwrap();
-        let offset = today.clone().added(DateDuration::new(0, 0, 0, -5000));
+        let today = Date::try_new_iso_date(2021, 6, 23).unwrap();
+        let today_minus_5000 = Date::try_new_iso_date(2007, 10, 15).unwrap();
+        let offset = today.added(DateDuration::new(0, 0, 0, -5000));
         assert_eq!(offset, today_minus_5000);
-        let offset = today
-            .clone()
-            .added(simple_subtract(&today_minus_5000, &today));
+        let offset = today.added(simple_subtract(&today_minus_5000, &today));
         assert_eq!(offset, today_minus_5000);
     }
 
     #[test]
     fn test_offset_at_month_boundary() {
-        let today = Date::new_iso_date_from_integers(2020, 2, 28).unwrap();
-        let today_plus_2 = Date::new_iso_date_from_integers(2020, 3, 1).unwrap();
+        let today = Date::try_new_iso_date(2020, 2, 28).unwrap();
+        let today_plus_2 = Date::try_new_iso_date(2020, 3, 1).unwrap();
         let offset = today.added(DateDuration::new(0, 0, 0, 2));
         assert_eq!(offset, today_plus_2);
 
-        let today = Date::new_iso_date_from_integers(2020, 2, 28).unwrap();
-        let today_plus_3 = Date::new_iso_date_from_integers(2020, 3, 2).unwrap();
+        let today = Date::try_new_iso_date(2020, 2, 28).unwrap();
+        let today_plus_3 = Date::try_new_iso_date(2020, 3, 2).unwrap();
         let offset = today.added(DateDuration::new(0, 0, 0, 3));
         assert_eq!(offset, today_plus_3);
 
-        let today = Date::new_iso_date_from_integers(2020, 2, 28).unwrap();
-        let today_plus_1 = Date::new_iso_date_from_integers(2020, 2, 29).unwrap();
+        let today = Date::try_new_iso_date(2020, 2, 28).unwrap();
+        let today_plus_1 = Date::try_new_iso_date(2020, 2, 29).unwrap();
         let offset = today.added(DateDuration::new(0, 0, 0, 1));
         assert_eq!(offset, today_plus_1);
 
-        let today = Date::new_iso_date_from_integers(2019, 2, 28).unwrap();
-        let today_plus_2 = Date::new_iso_date_from_integers(2019, 3, 2).unwrap();
+        let today = Date::try_new_iso_date(2019, 2, 28).unwrap();
+        let today_plus_2 = Date::try_new_iso_date(2019, 3, 2).unwrap();
         let offset = today.added(DateDuration::new(0, 0, 0, 2));
         assert_eq!(offset, today_plus_2);
 
-        let today = Date::new_iso_date_from_integers(2019, 2, 28).unwrap();
-        let today_plus_1 = Date::new_iso_date_from_integers(2019, 3, 1).unwrap();
+        let today = Date::try_new_iso_date(2019, 2, 28).unwrap();
+        let today_plus_1 = Date::try_new_iso_date(2019, 3, 1).unwrap();
         let offset = today.added(DateDuration::new(0, 0, 0, 1));
         assert_eq!(offset, today_plus_1);
 
-        let today = Date::new_iso_date_from_integers(2020, 3, 1).unwrap();
-        let today_minus_1 = Date::new_iso_date_from_integers(2020, 2, 29).unwrap();
+        let today = Date::try_new_iso_date(2020, 3, 1).unwrap();
+        let today_minus_1 = Date::try_new_iso_date(2020, 2, 29).unwrap();
         let offset = today.added(DateDuration::new(0, 0, 0, -1));
         assert_eq!(offset, today_minus_1);
+    }
+
+    #[test]
+    fn test_offset_handles_negative_month_offset() {
+        let today = Date::try_new_iso_date(2020, 3, 1).unwrap();
+        let today_minus_2_months = Date::try_new_iso_date(2020, 1, 1).unwrap();
+        let offset = today.added(DateDuration::new(0, -2, 0, 0));
+        assert_eq!(offset, today_minus_2_months);
+
+        let today = Date::try_new_iso_date(2020, 3, 1).unwrap();
+        let today_minus_4_months = Date::try_new_iso_date(2019, 11, 1).unwrap();
+        let offset = today.added(DateDuration::new(0, -4, 0, 0));
+        assert_eq!(offset, today_minus_4_months);
+
+        let today = Date::try_new_iso_date(2020, 3, 1).unwrap();
+        let today_minus_24_months = Date::try_new_iso_date(2018, 3, 1).unwrap();
+        let offset = today.added(DateDuration::new(0, -24, 0, 0));
+        assert_eq!(offset, today_minus_24_months);
+
+        let today = Date::try_new_iso_date(2020, 3, 1).unwrap();
+        let today_minus_27_months = Date::try_new_iso_date(2017, 12, 1).unwrap();
+        let offset = today.added(DateDuration::new(0, -27, 0, 0));
+        assert_eq!(offset, today_minus_27_months);
+    }
+
+    #[test]
+    fn test_offset_handles_out_of_bound_month_offset() {
+        let today = Date::try_new_iso_date(2021, 1, 31).unwrap();
+        // since 2021/02/31 isn't a valid date, `offset_date` auto-adjusts by adding 3 days to 2021/02/28
+        let today_plus_1_month = Date::try_new_iso_date(2021, 3, 3).unwrap();
+        let offset = today.added(DateDuration::new(0, 1, 0, 0));
+        assert_eq!(offset, today_plus_1_month);
+
+        let today = Date::try_new_iso_date(2021, 1, 31).unwrap();
+        // since 2021/02/31 isn't a valid date, `offset_date` auto-adjusts by adding 3 days to 2021/02/28
+        let today_plus_1_month_1_day = Date::try_new_iso_date(2021, 3, 4).unwrap();
+        let offset = today.added(DateDuration::new(0, 1, 0, 1));
+        assert_eq!(offset, today_plus_1_month_1_day);
+    }
+
+    #[test]
+    fn test_iso_to_from_fixed() {
+        // Reminder: ISO year 0 is Gregorian year 1 BCE.
+        // Year 0 is a leap year due to the 400-year rule.
+        fn check(fixed: i64, year: i32, month: u8, day: u8) {
+            let fixed = RataDie::new(fixed);
+            assert_eq!(
+                Iso::iso_year_from_fixed(fixed),
+                year as i64,
+                "fixed: {fixed:?}"
+            );
+            assert_eq!(
+                Iso::iso_from_fixed(fixed),
+                Date::try_new_iso_date(year, month, day).unwrap(),
+                "fixed: {fixed:?}"
+            );
+            assert_eq!(
+                Iso::fixed_from_iso_integers(year, month, day),
+                Some(fixed),
+                "fixed: {fixed:?}"
+            );
+        }
+        check(-1828, -5, 12, 30);
+        check(-1827, -5, 12, 31); // leap year
+        check(-1826, -4, 1, 1);
+        check(-1462, -4, 12, 30);
+        check(-1461, -4, 12, 31);
+        check(-1460, -3, 1, 1);
+        check(-1459, -3, 1, 2);
+        check(-732, -2, 12, 30);
+        check(-731, -2, 12, 31);
+        check(-730, -1, 1, 1);
+        check(-367, -1, 12, 30);
+        check(-366, -1, 12, 31);
+        check(-365, 0, 1, 1); // leap year
+        check(-364, 0, 1, 2);
+        check(-1, 0, 12, 30);
+        check(0, 0, 12, 31);
+        check(1, 1, 1, 1);
+        check(2, 1, 1, 2);
+        check(364, 1, 12, 30);
+        check(365, 1, 12, 31);
+        check(366, 2, 1, 1);
+        check(1459, 4, 12, 29);
+        check(1460, 4, 12, 30);
+        check(1461, 4, 12, 31); // leap year
+        check(1462, 5, 1, 1);
+    }
+
+    #[test]
+    fn test_from_minutes_since_local_unix_epoch() {
+        fn check(minutes: i32, year: i32, month: u8, day: u8, hour: u8, minute: u8) {
+            let today = DateTime::try_new_iso_datetime(year, month, day, hour, minute, 0).unwrap();
+            assert_eq!(today.minutes_since_local_unix_epoch(), minutes);
+            assert_eq!(
+                DateTime::from_minutes_since_local_unix_epoch(minutes),
+                today
+            );
+        }
+
+        check(-1441, 1969, 12, 30, 23, 59);
+        check(-1440, 1969, 12, 31, 0, 0);
+        check(-1439, 1969, 12, 31, 0, 1);
+        check(-2879, 1969, 12, 30, 0, 1);
     }
 }

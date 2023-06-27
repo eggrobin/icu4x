@@ -2,11 +2,20 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
+//! 🚧 \[Experimental\] Types to hold user preferences to configure a DateTimeFormatter.
+//!
 //! Preferences is a bag of options to be associated with either [`length::Bag`] or [`components::Bag`]
 //! which provides information on user preferences that can affect the result of the formatting.
 //!
 //! [`length::Bag`]: crate::options::length::Bag
 //! [`components::Bag`]: crate::options::components::Bag
+//!
+//! <div class="stab unstable">
+//! 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+//! including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+//! of the icu meta-crate. Use with caution.
+//! <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+//! </div>
 //!
 //! # Unicode Extensions
 //! User preferences will often be stored as part of the [`Locale`] identified as `Unicode Extensions`, but
@@ -27,7 +36,19 @@ use crate::fields;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use icu_locid::extensions_unicode_key as key;
+use icu_provider::DataLocale;
+use tinystr::tinystr;
+use tinystr::TinyAsciiStr;
+
 /// Stores user preferences which may affect the result of date and time formatting.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 ///
 /// # Examples
 ///
@@ -49,14 +70,41 @@ pub struct Bag {
 
 impl Bag {
     /// Construct a [`Bag`] with a given [`HourCycle`]
+    #[cfg(feature = "experimental")]
     pub fn from_hour_cycle(h: HourCycle) -> Self {
         Self {
             hour_cycle: Some(h),
         }
     }
+
+    /// Construct a [`Bag`] from a given [`DataLocale`]
+    pub(crate) fn from_data_locale(data_locale: &DataLocale) -> Self {
+        const H11: TinyAsciiStr<8> = tinystr!(8, "h11");
+        const H12: TinyAsciiStr<8> = tinystr!(8, "h12");
+        const H23: TinyAsciiStr<8> = tinystr!(8, "h23");
+        const H24: TinyAsciiStr<8> = tinystr!(8, "h24");
+        let hour_cycle = match data_locale
+            .get_unicode_ext(&key!("hc"))
+            .and_then(|v| v.as_single_subtag().copied())
+        {
+            Some(H11) => Some(HourCycle::H11),
+            Some(H12) => Some(HourCycle::H12),
+            Some(H23) => Some(HourCycle::H23),
+            Some(H24) => Some(HourCycle::H24),
+            _ => None,
+        };
+        Self { hour_cycle }
+    }
 }
 
 /// A user preference for adjusting how the hour component is displayed.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
+/// of the icu meta-crate. Use with caution.
+/// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
+/// </div>
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[allow(clippy::exhaustive_enums)] // this type is stable

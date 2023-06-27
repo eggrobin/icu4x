@@ -1,69 +1,51 @@
 # icu_properties [![crates.io](https://img.shields.io/crates/v/icu_properties)](https://crates.io/crates/icu_properties)
 
-`icu_properties` is one of the [`ICU4X`] components.
-
-This component provides definitions of [Unicode Properties] and APIs for
+Definitions of [Unicode Properties] and APIs for
 retrieving property data in an appropriate data structure.
 
-APIs that return a [`UnicodeSet`] exist for binary properties and certain enumerated
+This module is published as its own crate ([`icu_properties`](https://docs.rs/icu_properties/latest/icu_properties/))
+and as part of the [`icu`](https://docs.rs/icu/latest/icu/) crate. See the latter for more details on the ICU4X project.
+
+APIs that return a [`CodePointSetData`] exist for binary properties and certain enumerated
 properties. See the [`sets`] module for more details.
 
-APIs that return a [`CodePointTrie`] exist for certain enumerated properties. See the
+APIs that return a [`CodePointMapData`] exist for certain enumerated properties. See the
 [`maps`] module for more details.
 
 ## Examples
 
-### Property data as `UnicodeSet`s
+### Property data as `CodePointSetData`s
 
 ```rust
 use icu::properties::{maps, sets, GeneralCategory};
 
-let provider = icu_testdata::get_provider();
+// A binary property as a `CodePointSetData`
 
-// A binary property as a `UnicodeSet`
+assert!(sets::emoji().contains('🎃')); // U+1F383 JACK-O-LANTERN
+assert!(!sets::emoji().contains('木')); // U+6728
 
-let payload =
-    sets::get_emoji(&provider)
-        .expect("The data should be valid");
-let data_struct = payload.get();
-let emoji = &data_struct.inv_list;
+// An individual enumerated property value as a `CodePointSetData`
 
-assert!(emoji.contains('🎃'));  // U+1F383 JACK-O-LANTERN
-assert!(!emoji.contains('木'));  // U+6728
+let line_sep_data = maps::general_category().get_set_for_value(GeneralCategory::LineSeparator);
+let line_sep = line_sep_data.as_borrowed();
 
-// An individual enumerated property value as a `UnicodeSet`
-
-let payload = maps::get_general_category(&provider)
-    .expect("The data should be valid");
-let data_struct = payload.get();
-let gc = &data_struct.code_point_trie;
-let line_sep = gc.get_set_for_value(GeneralCategory::LineSeparator);
-
-assert!(line_sep.contains_u32(0x2028));
-assert!(!line_sep.contains_u32(0x2029));
+assert!(line_sep.contains32(0x2028));
+assert!(!line_sep.contains32(0x2029));
 ```
 
-### Property data as `CodePointTrie`s
+### Property data as `CodePointMapData`s
 
 ```rust
 use icu::properties::{maps, Script};
 
-let provider = icu_testdata::get_provider();
-
-let payload =
-    maps::get_script(&provider)
-        .expect("The data should be valid");
-let data_struct = payload.get();
-let script = &data_struct.code_point_trie;
-
-assert_eq!(script.get('🎃' as u32), Script::Common);  // U+1F383 JACK-O-LANTERN
-assert_eq!(script.get('木' as u32), Script::Han);  // U+6728
+assert_eq!(maps::script().get('🎃'), Script::Common); // U+1F383 JACK-O-LANTERN
+assert_eq!(maps::script().get('木'), Script::Han); // U+6728
 ```
 
 [`ICU4X`]: ../icu/index.html
 [Unicode Properties]: https://unicode-org.github.io/icu/userguide/strings/properties.html
-[`UnicodeSet`]: icu_uniset::UnicodeSet
-[`CodePointTrie`]: icu_codepointtrie::CodePointTrie
+[`CodePointSetData`]: crate::sets::CodePointSetData
+[`CodePointMapData`]: crate::maps::CodePointMapData
 [`sets`]: crate::sets
 
 ## More Information

@@ -18,7 +18,7 @@
         },
         "output": {
             "values": {
-                "en": "Tuesday, January 21, 2020 at 08:25:07 GMT+05:00"
+                "en": "Tuesday, January 21, 2020, 08:25:07 GMT+05:00"
             }
         }
     },
@@ -41,7 +41,7 @@
         },
         "output": {
             "values": {
-                "en": "Tuesday, January 21, 2020 at 08:25:07 GMT+05:00"
+                "en": "Tuesday, January 21, 2020, 08:25:07 GMT+05:00"
             }
         }
     },
@@ -64,7 +64,7 @@
         },
         "output": {
             "values": {
-                "en": "Tuesday, January 21, 2020 at 08:25:07 GMT+05:00"
+                "en": "Tuesday, January 21, 2020, 08:25:07 GMT+05:00"
             }
         }
     },
@@ -87,7 +87,7 @@
         },
         "output": {
             "values": {
-                "en": "Tuesday, January 21, 2020 at 08:25:07 GMT+05:00"
+                "en": "Tuesday, January 21, 2020, 08:25:07 GMT+05:00"
             }
         }
     },
@@ -110,7 +110,7 @@
         },
         "output": {
             "values": {
-                "en": "Tuesday, January 21, 2020 at 08:25:07 GMT+05:00"
+                "en": "Tuesday, January 21, 2020, 08:25:07 GMT+05:00"
             }
         }
     },
@@ -132,7 +132,10 @@
         },
         "output": {
             "values": {
-                "fil": "linggo 16 ng 2016, 08:25:07 GMT+05:00",
+                "en": "week 17 of 2016, 08:25:07 GMT+05:00",
+                "en-AU": "week 16 of 2016, 08:25:07 GMT+05:00",
+                "en-GB": "week 15 of 2016, 08:25:07 GMT+05:00",
+                "fil": "linggo 17 ng 2016, 08:25:07 GMT+05:00",
                 "en-ZA": "week 17 of 2016, 08:25:07 GMT+05:00"
             }
         }

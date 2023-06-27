@@ -5,10 +5,14 @@
 //! See [`ZeroMap2d`](crate::ZeroMap2d) for details.
 
 mod borrowed;
+mod cursor;
 pub(crate) mod map;
+
+#[cfg(feature = "databake")]
+mod databake;
 #[cfg(feature = "serde")]
 mod serde;
 
 pub use crate::ZeroMap2d;
 pub use borrowed::ZeroMap2dBorrowed;
-pub use map::KeyError;
+pub use cursor::ZeroMap2dCursor;

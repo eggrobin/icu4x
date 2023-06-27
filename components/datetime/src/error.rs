@@ -2,19 +2,27 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use crate::date::DateTimeError;
 use crate::fields::FieldSymbol;
+use crate::input::CalendarError;
 use crate::pattern::PatternError;
+#[cfg(feature = "experimental")]
 use crate::skeleton::SkeletonError;
 use displaydoc::Display;
-use icu_plurals::PluralRulesError;
-use icu_provider::prelude::DataError;
-use tinystr::TinyStr16;
+use icu_calendar::any_calendar::AnyCalendarKind;
+use icu_calendar::types::MonthCode;
+use icu_decimal::DecimalError;
+use icu_plurals::PluralsError;
+use icu_provider::DataError;
 
-/// A list of possible error outcomes for the [`DateTimeFormat`](crate::DateTimeFormat) struct.
-#[derive(Display, Debug, Copy, Clone)]
+#[cfg(feature = "std")]
+impl std::error::Error for DateTimeError {}
+
+/// A list of error outcomes for various operations in this module.
+///
+/// Re-exported as [`Error`](crate::Error).
+#[derive(Display, Debug, Copy, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum DateTimeFormatError {
+pub enum DateTimeError {
     /// An error originating from parsing a pattern.
     #[displaydoc("{0}")]
     Pattern(PatternError),
@@ -23,13 +31,14 @@ pub enum DateTimeFormatError {
     Format(core::fmt::Error),
     /// An error originating inside of the [data provider](icu_provider).
     #[displaydoc("{0}")]
-    DataProvider(DataError),
+    Data(DataError),
     /// An error originating from a missing field in datetime input.
     /// TODO: How can we return which field was missing?
     #[displaydoc("Missing input field")]
-    MissingInputField,
+    MissingInputField(Option<&'static str>),
     /// An error originating from skeleton matching.
     #[displaydoc("{0}")]
+    #[cfg(feature = "experimental")]
     Skeleton(SkeletonError),
     /// An error originating from an unsupported field in a datetime format.
     #[displaydoc("Unsupported field: {0:?}")]
@@ -39,56 +48,69 @@ pub enum DateTimeFormatError {
     UnsupportedOptions,
     /// An error originating from [`PluralRules`][icu_plurals::PluralRules].
     #[displaydoc("{0}")]
-    PluralRules(PluralRulesError),
-    /// An error originating from [`DateTimeInput`][crate::date::DateTimeInput].
+    PluralRules(PluralsError),
+    /// An error originating from [`DateTimeInput`][crate::input::DateTimeInput].
     #[displaydoc("{0}")]
-    DateTimeInput(DateTimeError),
+    DateTimeInput(CalendarError),
     /// An error originating from a missing weekday symbol in the data.
     #[displaydoc("Data file missing weekday symbol for weekday {0}")]
     MissingWeekdaySymbol(usize),
     /// An error originating from a missing month symbol in the data.
     #[displaydoc("Data file missing month symbol for month code {0}")]
-    MissingMonthSymbol(usize),
-    /// An error originating from a missing era symbol in the data.
-    #[displaydoc("Data file missing era symbol for era code {0}")]
-    MissingEraSymbol(TinyStr16),
+    MissingMonthSymbol(MonthCode),
+    /// An error while attempting to format the input as a FixedDecimal
+    #[displaydoc("FixedDecimal")]
+    FixedDecimal,
+    /// An error originating from FixedDecimalFormatter
+    #[displaydoc("{0}")]
+    FixedDecimalFormatter(DecimalError),
+    /// An error from mixing calendar types in [`DateTimeFormatter`](crate::DateTimeFormatter)
+    #[displaydoc("DateTimeFormatter for {0} calendar was given a {1:?} calendar")]
+    MismatchedAnyCalendar(AnyCalendarKind, Option<AnyCalendarKind>),
+    /// Missing date symbols
+    #[displaydoc("Missing date symbols")]
+    MissingDateSymbols,
+    /// Missing time symbols
+    #[displaydoc("Missing time symbols")]
+    MissingTimeSymbols,
+    /// ordinal_rules must be set for PatternPlurals::MultipleVariants
+    #[displaydoc("ordinal_rules must be set for PatternPlurals::MultipleVariants")]
+    MissingOrdinalRules,
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for DateTimeFormatError {}
-
-impl From<PatternError> for DateTimeFormatError {
+impl From<PatternError> for DateTimeError {
     fn from(e: PatternError) -> Self {
-        DateTimeFormatError::Pattern(e)
+        DateTimeError::Pattern(e)
     }
 }
 
-impl From<DataError> for DateTimeFormatError {
+impl From<DataError> for DateTimeError {
     fn from(e: DataError) -> Self {
-        DateTimeFormatError::DataProvider(e)
+        DateTimeError::Data(e)
     }
 }
 
-impl From<core::fmt::Error> for DateTimeFormatError {
+impl From<core::fmt::Error> for DateTimeError {
     fn from(e: core::fmt::Error) -> Self {
-        DateTimeFormatError::Format(e)
+        DateTimeError::Format(e)
     }
 }
 
-impl From<SkeletonError> for DateTimeFormatError {
+#[cfg(feature = "experimental")]
+impl From<SkeletonError> for DateTimeError {
     fn from(e: SkeletonError) -> Self {
-        DateTimeFormatError::Skeleton(e)
+        DateTimeError::Skeleton(e)
     }
 }
 
-impl From<PluralRulesError> for DateTimeFormatError {
-    fn from(e: PluralRulesError) -> Self {
-        DateTimeFormatError::PluralRules(e)
+impl From<PluralsError> for DateTimeError {
+    fn from(e: PluralsError) -> Self {
+        DateTimeError::PluralRules(e)
     }
 }
 
-impl From<DateTimeError> for DateTimeFormatError {
-    fn from(e: DateTimeError) -> Self {
-        DateTimeFormatError::DateTimeInput(e)
+impl From<CalendarError> for DateTimeError {
+    fn from(e: CalendarError) -> Self {
+        DateTimeError::DateTimeInput(e)
     }
 }

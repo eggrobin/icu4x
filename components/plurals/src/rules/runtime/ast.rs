@@ -2,30 +2,37 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-#![allow(missing_docs)]
-#![allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
-
 use crate::rules::reference;
-use core::{convert::TryInto, fmt, str::FromStr};
-use icu_provider::{yoke, zerofrom};
+use core::{
+    convert::{TryFrom, TryInto},
+    fmt, num,
+    str::FromStr,
+};
+use icu_provider::prelude::*;
 use zerovec::{
     ule::{tuple::Tuple2ULE, AsULE, ZeroVecError, ULE},
     {VarZeroVec, ZeroVec},
 };
 
 #[derive(yoke::Yokeable, zerofrom::ZeroFrom, Clone, PartialEq, Debug)]
+#[cfg_attr(
+    feature = "datagen",
+    derive(databake::Bake),
+    databake(path = icu_plurals::rules::runtime::ast),
+)]
+#[allow(clippy::exhaustive_structs)] // Reference AST is non-public and this type is stable
 pub struct Rule<'data>(pub VarZeroVec<'data, RelationULE>);
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
 #[repr(u8)]
-pub enum AndOr {
+pub(crate) enum AndOr {
     Or,
     And,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
 #[repr(u8)]
-pub enum Polarity {
+pub(crate) enum Polarity {
     Negative,
     Positive,
 }
@@ -33,7 +40,7 @@ pub enum Polarity {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
 #[repr(u8)]
 #[zerovec::make_ule(OperandULE)]
-pub enum Operand {
+pub(crate) enum Operand {
     N = 0,
     I = 1,
     V = 2,
@@ -45,7 +52,7 @@ pub enum Operand {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
-pub enum RangeOrValue {
+pub(crate) enum RangeOrValue {
     Range(u32, u32),
     Value(u32),
 }
@@ -72,8 +79,10 @@ impl fmt::Debug for RelationULE {
 }
 /////
 
-impl From<&reference::ast::Rule> for Rule<'_> {
-    fn from(input: &reference::ast::Rule) -> Self {
+impl TryFrom<&reference::ast::Rule> for Rule<'_> {
+    type Error = num::TryFromIntError;
+
+    fn try_from(input: &reference::ast::Rule) -> Result<Self, Self::Error> {
         let mut relations: alloc::vec::Vec<Relation> = alloc::vec![];
 
         for (i_or, and_condition) in input.condition.0.iter().enumerate() {
@@ -82,8 +91,8 @@ impl From<&reference::ast::Rule> for Rule<'_> {
                     .range_list
                     .0
                     .iter()
-                    .map(Into::into)
-                    .collect::<alloc::vec::Vec<_>>();
+                    .map(|rov| rov.try_into())
+                    .collect::<Result<alloc::vec::Vec<_>, _>>()?;
 
                 let and_or = if i_or > 0 && i_and == 0 {
                     AndOr::Or
@@ -99,13 +108,13 @@ impl From<&reference::ast::Rule> for Rule<'_> {
 
                 relations.push(Relation {
                     aopo,
-                    modulo: get_modulo(&relation.expression.modulus),
+                    modulo: get_modulo(&relation.expression.modulus)?,
                     range_list: ZeroVec::alloc_from_slice(&range_list),
                 })
             }
         }
 
-        Self(VarZeroVec::from(relations.as_slice()))
+        Ok(Self(VarZeroVec::from(relations.as_slice())))
     }
 }
 
@@ -198,11 +207,11 @@ impl From<(Operand, u32)> for reference::ast::Expression {
     }
 }
 
-fn get_modulo(op: &Option<reference::ast::Value>) -> u32 {
+fn get_modulo(op: &Option<reference::ast::Value>) -> Result<u32, num::TryFromIntError> {
     if let Some(op) = op {
-        u32::from(op)
+        u32::try_from(op)
     } else {
-        0
+        Ok(0)
     }
 }
 
@@ -214,10 +223,11 @@ fn get_modulus(input: u32) -> Option<reference::ast::Value> {
     }
 }
 
-impl From<&reference::ast::Value> for u32 {
-    fn from(v: &reference::ast::Value) -> Self {
-        #[allow(clippy::expect_used)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        v.0.try_into().expect("Failed to convert u64 into u32")
+impl TryFrom<&reference::ast::Value> for u32 {
+    type Error = num::TryFromIntError;
+
+    fn try_from(v: &reference::ast::Value) -> Result<Self, Self::Error> {
+        v.0.try_into()
     }
 }
 
@@ -227,14 +237,16 @@ impl From<u32> for reference::ast::Value {
     }
 }
 
-impl From<&reference::ast::RangeListItem> for RangeOrValue {
-    fn from(item: &reference::ast::RangeListItem) -> Self {
-        match item {
+impl TryFrom<&reference::ast::RangeListItem> for RangeOrValue {
+    type Error = num::TryFromIntError;
+
+    fn try_from(item: &reference::ast::RangeListItem) -> Result<Self, Self::Error> {
+        Ok(match item {
             reference::ast::RangeListItem::Range(range) => {
-                RangeOrValue::Range(range.start().into(), range.end().into())
+                RangeOrValue::Range(range.start().try_into()?, range.end().try_into()?)
             }
-            reference::ast::RangeListItem::Value(value) => RangeOrValue::Value(value.into()),
-        }
+            reference::ast::RangeListItem::Value(value) => RangeOrValue::Value(value.try_into()?),
+        })
     }
 }
 
@@ -252,7 +264,7 @@ impl FromStr for Rule<'_> {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let rule = reference::parser::parse(s.as_bytes())?;
-        Ok((&rule).into())
+        Rule::try_from(&rule).map_err(|_| reference::parser::ParserError::ValueTooLarge)
     }
 }
 
@@ -395,7 +407,7 @@ mod serde {
         {
             Rule::from_str(rule_string).map_err(|err| {
                 de::Error::invalid_value(
-                    de::Unexpected::Other(&format!("{}", err)),
+                    de::Unexpected::Other(&format!("{err}")),
                     &"a valid UTS 35 rule string",
                 )
             })
@@ -407,7 +419,7 @@ mod serde {
         {
             let rule = VarZeroVec::parse_byte_slice(rule_bytes).map_err(|err| {
                 de::Error::invalid_value(
-                    de::Unexpected::Other(&format!("{}", err)),
+                    de::Unexpected::Other(&format!("{err}")),
                     &"a valid UTS 35 rule byte slice",
                 )
             })?;
@@ -441,7 +453,7 @@ mod test {
         use reference::ast;
 
         let input = "i = 1";
-        let full_ast = reference::parse(input.as_bytes()).unwrap();
+        let full_ast = reference::parse(input.as_bytes()).expect("Failed to convert Rule");
         assert_eq!(
             full_ast,
             ast::Rule {
@@ -457,7 +469,7 @@ mod test {
             }
         );
 
-        let rule = Rule::from(&full_ast);
+        let rule = Rule::try_from(&full_ast).expect("Failed to convert Rule");
         let relation = rule
             .0
             .iter()
@@ -473,11 +485,11 @@ mod test {
                     operand: Operand::I,
                 },
                 modulo: 0,
-                range_list: ZeroVec::Borrowed(&[RangeOrValue::Value(1).to_unaligned()])
+                range_list: ZeroVec::new_borrowed(&[RangeOrValue::Value(1).to_unaligned()])
             }
         );
 
-        let fd = fixed_decimal::decimal::FixedDecimal::from(1);
+        let fd = fixed_decimal::FixedDecimal::from(1);
         let operands = PluralOperands::from(&fd);
         assert!(test_rule(&rule, &operands),);
     }
@@ -485,30 +497,30 @@ mod test {
     #[test]
     fn complex_rule_test() {
         let input = "n % 10 = 3..4, 9 and n % 100 != 10..19, 70..79, 90..99 or n = 0";
-        let ref_rule = reference::parse(input.as_bytes()).unwrap();
-        let rule = Rule::from(&ref_rule);
+        let ref_rule = reference::parse(input.as_bytes()).expect("Failed to parse Rule");
+        let rule = Rule::try_from(&ref_rule).expect("Failed to convert Rule");
 
-        let fd = fixed_decimal::decimal::FixedDecimal::from(0);
+        let fd = fixed_decimal::FixedDecimal::from(0);
         let operands = PluralOperands::from(&fd);
         assert!(test_rule(&rule, &operands),);
 
-        let fd = fixed_decimal::decimal::FixedDecimal::from(13);
+        let fd = fixed_decimal::FixedDecimal::from(13);
         let operands = PluralOperands::from(&fd);
         assert!(!test_rule(&rule, &operands),);
 
-        let fd = fixed_decimal::decimal::FixedDecimal::from(103);
+        let fd = fixed_decimal::FixedDecimal::from(103);
         let operands = PluralOperands::from(&fd);
         assert!(test_rule(&rule, &operands),);
 
-        let fd = fixed_decimal::decimal::FixedDecimal::from(113);
+        let fd = fixed_decimal::FixedDecimal::from(113);
         let operands = PluralOperands::from(&fd);
         assert!(!test_rule(&rule, &operands),);
 
-        let fd = fixed_decimal::decimal::FixedDecimal::from(178);
+        let fd = fixed_decimal::FixedDecimal::from(178);
         let operands = PluralOperands::from(&fd);
         assert!(!test_rule(&rule, &operands),);
 
-        let fd = fixed_decimal::decimal::FixedDecimal::from(0);
+        let fd = fixed_decimal::FixedDecimal::from(0);
         let operands = PluralOperands::from(&fd);
         assert!(test_rule(&rule, &operands),);
     }
@@ -520,7 +532,7 @@ mod test {
         let ref_rule = reference::parse(input.as_bytes()).unwrap();
 
         // Create a ZVZ backed Rule from the reference one.
-        let rule = Rule::from(&ref_rule);
+        let rule = Rule::try_from(&ref_rule).expect("Failed to convert Rule");
 
         // Convert it back to reference Rule and compare.
         assert_eq!(ref_rule, reference::ast::Rule::from(&rule));
@@ -556,10 +568,10 @@ mod test {
             range_list: ZeroVec::alloc_from_slice(&[rov]),
         };
         let relations = alloc::vec![relation];
-        let vzv = VarZeroVec::from(relations.as_slice());
+        let vzv = VarZeroVec::<_>::from(relations.as_slice());
         assert_eq!(
             vzv.as_bytes(),
-            &[1, 0, 0, 0, 0, 0, 0, 0, 192, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
+            &[1, 0, 0, 0, 0, 0, 192, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
         );
     }
 }

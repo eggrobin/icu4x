@@ -2,19 +2,11 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use crate::parser::{get_subtag_iterator, ParserError};
-use alloc::vec;
-use alloc::vec::Vec;
+use crate::helpers::ShortSlice;
+use crate::parser::{ParserError, SubtagIterator};
 use core::ops::RangeInclusive;
 use core::str::FromStr;
 use tinystr::TinyAsciiStr;
-
-#[derive(Debug, PartialEq, Eq, Clone, Hash, PartialOrd, Ord)]
-#[allow(missing_docs)] // TODO(#1028) - Add missing docs.
-pub struct Value(Vec<TinyAsciiStr<{ *TYPE_LENGTH.end() }>>);
-
-const TYPE_LENGTH: RangeInclusive<usize> = 3..=8;
-const TRUE_TVALUE: TinyAsciiStr<8> = tinystr::tinystr!(8, "true");
 
 /// A value used in a list of [`Fields`](super::Fields).
 ///
@@ -23,20 +15,23 @@ const TRUE_TVALUE: TinyAsciiStr<8> = tinystr::tinystr!(8, "true");
 /// Each part of the sequence has to be no shorter than three characters and no
 /// longer than 8.
 ///
-///
 /// # Examples
 ///
 /// ```
 /// use icu::locid::extensions::transform::Value;
 ///
-/// let value1: Value = "hybrid".parse()
-///     .expect("Failed to parse a Value.");
-/// let value2: Value = "hybrid-foobar".parse()
-///     .expect("Failed to parse a Value.");
+/// "hybrid".parse::<Value>().expect("Valid Value.");
 ///
-/// assert_eq!(&value1.to_string(), "hybrid");
-/// assert_eq!(&value2.to_string(), "hybrid-foobar");
+/// "hybrid-foobar".parse::<Value>().expect("Valid Value.");
+///
+/// "no".parse::<Value>().expect_err("Invalid Value.");
 /// ```
+#[derive(Debug, PartialEq, Eq, Clone, Hash, PartialOrd, Ord, Default)]
+pub struct Value(ShortSlice<TinyAsciiStr<{ *TYPE_LENGTH.end() }>>);
+
+const TYPE_LENGTH: RangeInclusive<usize> = 3..=8;
+const TRUE_TVALUE: TinyAsciiStr<8> = tinystr::tinystr!(8, "true");
+
 impl Value {
     /// A constructor which takes a utf8 slice, parses it and
     /// produces a well-formed [`Value`].
@@ -46,16 +41,13 @@ impl Value {
     /// ```
     /// use icu::locid::extensions::transform::Value;
     ///
-    /// let value = Value::from_bytes(b"hybrid")
-    ///     .expect("Parsing failed.");
-    ///
-    /// assert_eq!(&value.to_string(), "hybrid");
+    /// let value = Value::try_from_bytes(b"hybrid").expect("Parsing failed.");
     /// ```
-    pub fn from_bytes(input: &[u8]) -> Result<Self, ParserError> {
-        let mut v = vec![];
+    pub fn try_from_bytes(input: &[u8]) -> Result<Self, ParserError> {
+        let mut v = ShortSlice::default();
         let mut has_value = false;
 
-        for subtag in get_subtag_iterator(input) {
+        for subtag in SubtagIterator::new(input) {
             if !Self::is_type_subtag(subtag) {
                 return Err(ParserError::InvalidExtension);
             }
@@ -73,12 +65,14 @@ impl Value {
         Ok(Self(v))
     }
 
-    pub(crate) fn from_vec_unchecked(input: Vec<TinyAsciiStr<{ *TYPE_LENGTH.end() }>>) -> Self {
+    pub(crate) fn from_short_slice_unchecked(
+        input: ShortSlice<TinyAsciiStr<{ *TYPE_LENGTH.end() }>>,
+    ) -> Self {
         Self(input)
     }
 
     pub(crate) fn is_type_subtag(t: &[u8]) -> bool {
-        TYPE_LENGTH.contains(&t.len()) && !t.iter().any(|c: &u8| !c.is_ascii_alphanumeric())
+        TYPE_LENGTH.contains(&t.len()) && t.iter().all(u8::is_ascii_alphanumeric)
     }
 
     pub(crate) fn parse_subtag(
@@ -115,8 +109,26 @@ impl FromStr for Value {
     type Err = ParserError;
 
     fn from_str(source: &str) -> Result<Self, Self::Err> {
-        Self::from_bytes(source.as_bytes())
+        Self::try_from_bytes(source.as_bytes())
     }
 }
 
-impl_writeable_for_tinystr_list!(Value, "true", "hybrid", "foobar");
+impl_writeable_for_each_subtag_str_no_test!(Value, selff, selff.0.is_empty() => alloc::borrow::Cow::Borrowed("true"));
+
+#[test]
+fn test_writeable() {
+    use writeable::assert_writeable_eq;
+
+    let hybrid = "hybrid".parse().unwrap();
+    let foobar = "foobar".parse().unwrap();
+
+    assert_writeable_eq!(Value::default(), "true");
+    assert_writeable_eq!(
+        Value::from_short_slice_unchecked(vec![hybrid].into()),
+        "hybrid"
+    );
+    assert_writeable_eq!(
+        Value::from_short_slice_unchecked(vec![hybrid, foobar].into()),
+        "hybrid-foobar"
+    );
+}

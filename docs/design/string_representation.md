@@ -65,7 +65,7 @@ On the input side, `&str` differs from `&[u8]` holding potentially-invalid UTF-8
 
 On the outside, the function that takes `&mut str` always delegates to the version that takes `&mut [u8]` and trailing loop that zeros bytes after the last byte written by the delegate function until either the end of the slice or UTF a lead byte is reached. This is enough to uphold the invariant of `&mut str`.
 
-A given ICU4X operation that outputs text must always provide a version, whose input type is `&str` and output type is `&mut [u8]` (this one gets exposed via FFI as `_unsafe_utf8`), the version whose input type is `&str` and output type is `&mut str`, and a version whose input type is `&str` and that returns a `String` instead of having an output argument. The last two or always implemented as a thin mechanical wrappers around the first one. If performance considerations permit, the first one may just delegate to the version that takes `&[u8]` input. The function that returs a `String` has no name annotation.
+A given ICU4X operation that outputs text must always provide a version, whose input type is `&str` and output type is `&mut [u8]` (this one gets exposed via FFI as `_unsafe_utf8`), the version whose input type is `&str` and output type is `&mut str`, and a version whose input type is `&str` and that returns a `String` instead of having an output argument. The last two or always implemented as a thin mechanical wrappers around the first one. If performance considerations permit, the first one may just delegate to the version that takes `&[u8]` input. The function that returns a `String` has no name annotation.
 
 ### Potentially-invalid UTF-16
 
@@ -102,6 +102,13 @@ It is expected that text formatting functions will fit into this output category
 ## Iterators
 
 For Rust callers, a given ICU4X operation may be provided as a version that takes input via an iterator that yields `char` and provides output by implementing an iterator that yields `char`. For some operations, this may be the sole internal implementation such that the slice versions are merely wrapper around this one. However, for operations that need lookahead, the slice operations may be implemented more efficiently by performing lookahead on the slice as opposed to having an iterator implementation that allocates internally in order to turn lookahead into buffering. The name annotation for the function that creates the iterator is `_iter`.
+
+## Encoding over FFI
+
+We tend to try and match the FFI ecosystem's approach to encoding where possible. So, in JS/WASM, Rust APIs that take in `&str` will instead consume a JS `String` and convert it to UTF-8 on the fly. On the other hand, in C we take in a `char*` and a length, and in C++ we take a `std::string_view`, and assume that they are UTF-8.
+
+The `char8_t` and `std::u8string_view` types were considered but not chosen due to compatibility concerns. `u8"..."` style literals are recommended to be used if available as they will be compatible with `std::string_view`.
+
 
 ## Example: `to_lowercase` without locale-sensitive behavior
 

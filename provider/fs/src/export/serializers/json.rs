@@ -2,54 +2,15 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
+//! Serializer configurations for [`serde_json`].
+
 use super::AbstractSerializer;
-use super::Error;
 use icu_provider::buf::BufferFormat;
-use std::io::{self, Write};
+use icu_provider::datagen::*;
+use icu_provider::prelude::*;
+use std::io;
 
-/// A small helper class to convert LF to CRLF on Windows.
-/// Workaround for https://github.com/serde-rs/json/issues/535
-struct BufWriterWithLineEndingFix<W: io::Write>(io::BufWriter<W>);
-
-impl<W: io::Write> BufWriterWithLineEndingFix<W> {
-    pub fn new(inner: W) -> Self {
-        Self(io::BufWriter::with_capacity(4096, inner))
-    }
-}
-
-impl<W: io::Write> io::Write for BufWriterWithLineEndingFix<W> {
-    #[cfg(windows)]
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if buf.contains(&b'\n') {
-            for b in buf.iter() {
-                if *b == b'\n' {
-                    // Note: Since we need to emit the \r, we are adding extra bytes than were in
-                    // the input buffer. BufWriter helps because short writes (less than 4096 B)
-                    // will always write or fail in their entirety.
-                    self.0.write(b"\r\n")
-                } else {
-                    self.0.write(&[*b])
-                }?;
-            }
-            // The return value is the number of *input* bytes that were written.
-            Ok(buf.len())
-        } else {
-            self.0.write(buf)
-        }
-    }
-
-    #[cfg(not(windows))]
-    #[inline]
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
-    }
-
-    #[inline]
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
-    }
-}
-
+/// Choices for how to render the JSON files.
 #[non_exhaustive]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum StyleOption {
@@ -60,6 +21,25 @@ pub enum StyleOption {
 }
 
 /// A serializer for JavaScript Object Notation (JSON).
+///
+/// # Examples
+///
+/// ```
+/// use icu_provider_fs::export::serializers;
+/// use icu_provider_fs::export::FilesystemExporter;
+///
+/// let serializer = serializers::postcard::Serializer::new(Default::default());
+///
+/// // Then pass it to a FilesystemExporter:
+/// let demo_path = std::env::temp_dir().join("icu4x_json_serializer_demo");
+/// FilesystemExporter::try_new(
+///     Box::from(serializer),
+///     demo_path.clone().into(),
+/// )
+/// .unwrap();
+/// std::fs::remove_dir_all(&demo_path).expect("Cleaning up test directory");
+/// ```
+#[derive(Debug)]
 pub struct Serializer {
     style: StyleOption,
 }
@@ -83,22 +63,14 @@ impl Default for Options {
 impl AbstractSerializer for Serializer {
     fn serialize(
         &self,
-        obj: &dyn erased_serde::Serialize,
-        sink: &mut dyn io::Write,
-    ) -> Result<(), Error> {
-        let mut sink = BufWriterWithLineEndingFix::new(sink);
+        obj: &DataPayload<ExportMarker>,
+        mut sink: &mut dyn io::Write,
+    ) -> Result<(), DataError> {
         match self.style {
-            StyleOption::Compact => {
-                obj.erased_serialize(&mut <dyn erased_serde::Serializer>::erase(
-                    &mut serde_json::Serializer::new(&mut sink),
-                ))?;
-            }
-            StyleOption::Pretty => {
-                obj.erased_serialize(&mut <dyn erased_serde::Serializer>::erase(
-                    &mut serde_json::Serializer::pretty(&mut sink),
-                ))?;
-            }
-        };
+            StyleOption::Compact => obj.serialize(&mut serde_json::Serializer::new(&mut sink)),
+            StyleOption::Pretty => obj.serialize(&mut serde_json::Serializer::pretty(&mut sink)),
+        }
+        .map_err(|e| DataError::custom("JSON serialize").with_display_context(&e))?;
         // Write an empty line at the end of the document
         writeln!(sink)?;
         Ok(())
@@ -107,15 +79,22 @@ impl AbstractSerializer for Serializer {
     fn get_buffer_format(&self) -> BufferFormat {
         BufferFormat::Json
     }
+
+    fn is_text_format(&self) -> bool {
+        true
+    }
 }
 
 impl Serializer {
+    /// Creates a new serializer for [`serde_json`].
     pub fn new(options: Options) -> Self {
         Self {
             style: options.style,
         }
     }
 
+    /// Convenience function to create a JSON serializer with the
+    /// [`StyleOption::Pretty`] format.
     pub fn pretty() -> Self {
         Self::new(Options {
             style: StyleOption::Pretty,

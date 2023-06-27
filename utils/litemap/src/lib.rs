@@ -31,7 +31,10 @@
         clippy::indexing_slicing,
         clippy::unwrap_used,
         clippy::expect_used,
-        clippy::panic
+        clippy::panic,
+        clippy::exhaustive_structs,
+        clippy::exhaustive_enums,
+        missing_debug_implementations,
     )
 )]
 
@@ -44,9 +47,11 @@ extern crate alloc;
 mod map;
 #[cfg(feature = "serde")]
 mod serde;
+#[cfg(feature = "serde")]
+mod serde_helpers;
 pub mod store;
 
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
 pub use map::LiteMap;

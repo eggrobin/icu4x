@@ -3,11 +3,14 @@
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
 use core::borrow::Borrow;
+use core::cmp::Ordering;
 use core::iter::FromIterator;
 use litemap::LiteMap;
 
 use super::Key;
 use super::Value;
+use crate::helpers::ShortSlice;
+use crate::ordering::SubtagOrderingResult;
 
 /// A list of [`Key`]-[`Value`] pairs representing functional information
 /// about locale's internationnalization preferences.
@@ -26,13 +29,14 @@ use super::Value;
 /// Manually build up a [`Keywords`] object:
 ///
 /// ```
-/// use icu::locid::extensions::unicode::{Keywords, Key, Value};
+/// use icu::locid::{
+///     extensions::unicode::Keywords, extensions_unicode_key as key,
+///     extensions_unicode_value as value, locale,
+/// };
 ///
-/// let key: Key = "hc".parse()
-///     .expect("Failed to parse a Key.");
-/// let value: Value = "h23".parse()
-///     .expect("Failed to parse a Value.");
-/// let keywords: Keywords = vec![(key, value)].into_iter().collect();
+/// let keywords = vec![(key!("hc"), value!("h23"))]
+///     .into_iter()
+///     .collect::<Keywords>();
 ///
 /// assert_eq!(&keywords.to_string(), "hc-h23");
 /// ```
@@ -40,33 +44,29 @@ use super::Value;
 /// Access a [`Keywords`] object from a [`Locale`]:
 ///
 /// ```
-/// use icu::locid::{Locale, unicode_ext_key, unicode_ext_value};
+/// use icu::locid::{
+///     extensions_unicode_key as key, extensions_unicode_value as value,
+///     Locale,
+/// };
 ///
-/// let loc: Locale = "und-u-hc-h23-kc-true".parse()
-///     .expect("Valid BCP-47");
+/// let loc: Locale = "und-u-hc-h23-kc-true".parse().expect("Valid BCP-47");
 ///
+/// assert_eq!(loc.extensions.unicode.keywords.get(&key!("ca")), None);
 /// assert_eq!(
-///     loc.extensions.unicode.keywords.get(&unicode_ext_key!("ca")),
-///     None
+///     loc.extensions.unicode.keywords.get(&key!("hc")),
+///     Some(&value!("h23"))
 /// );
 /// assert_eq!(
-///     loc.extensions.unicode.keywords.get(&unicode_ext_key!("hc")),
-///     Some(&unicode_ext_value!("h23"))
-/// );
-/// assert_eq!(
-///     loc.extensions.unicode.keywords.get(&unicode_ext_key!("kc")),
-///     Some(&unicode_ext_value!("true"))
+///     loc.extensions.unicode.keywords.get(&key!("kc")),
+///     Some(&value!("true"))
 /// );
 ///
-/// assert_eq!(
-///     loc.extensions.unicode.keywords.to_string(),
-///     "hc-h23-kc"
-/// );
+/// assert_eq!(loc.extensions.unicode.keywords.to_string(), "hc-h23-kc");
 /// ```
 ///
 /// [`Locale`]: crate::Locale
 #[derive(Clone, PartialEq, Eq, Debug, Default, Hash, PartialOrd, Ord)]
-pub struct Keywords(LiteMap<Key, Value>);
+pub struct Keywords(LiteMap<Key, Value, ShortSlice<(Key, Value)>>);
 
 impl Keywords {
     /// Returns a new empty list of key-value pairs. Same as [`default()`](Default::default()), but is `const`.
@@ -83,16 +83,25 @@ impl Keywords {
         Self(LiteMap::new())
     }
 
+    /// Create a new list of key-value pairs having exactly one pair, callable in a `const` context.
+    #[inline]
+    pub const fn new_single(key: Key, value: Value) -> Self {
+        Self(LiteMap::from_sorted_store_unchecked(
+            ShortSlice::new_single((key, value)),
+        ))
+    }
+
     /// Returns `true` if there are no keywords.
     ///
     /// # Examples
     ///
     /// ```
-    /// use icu::locid::Locale;
     /// use icu::locid::extensions::unicode::Keywords;
+    /// use icu::locid::locale;
+    /// use icu::locid::Locale;
     ///
-    /// let loc1 = Locale::from_bytes(b"und-t-h0-hybrid").unwrap();
-    /// let loc2 = Locale::from_bytes(b"und-u-ca-buddhist").unwrap();
+    /// let loc1 = Locale::try_from_bytes(b"und-t-h0-hybrid").unwrap();
+    /// let loc2 = locale!("und-u-ca-buddhist");
     ///
     /// assert!(loc1.extensions.unicode.keywords.is_empty());
     /// assert!(!loc2.extensions.unicode.keywords.is_empty());
@@ -107,18 +116,16 @@ impl Keywords {
     /// # Examples
     ///
     /// ```
-    /// use icu::locid::extensions::unicode::{Keywords, Key, Value};
-    /// use litemap::LiteMap;
+    /// use icu::locid::{
+    ///     extensions::unicode::Keywords, extensions_unicode_key as key,
+    ///     extensions_unicode_value as value,
+    /// };
     ///
-    /// let key: Key = "ca".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// let value: Value = "gregory".parse()
-    ///     .expect("Failed to parse a Value.");
-    /// let keywords: Keywords = vec![(key, value)].into_iter().collect();
+    /// let keywords = vec![(key!("ca"), value!("gregory"))]
+    ///     .into_iter()
+    ///     .collect::<Keywords>();
     ///
-    /// let key: Key = "ca".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// assert!(&keywords.contains_key(&key));
+    /// assert!(&keywords.contains_key(&key!("ca")));
     /// ```
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
@@ -134,20 +141,16 @@ impl Keywords {
     /// # Examples
     ///
     /// ```
-    /// use icu::locid::extensions::unicode::{Keywords, Key, Value};
+    /// use icu::locid::{
+    ///     extensions::unicode::Keywords, extensions_unicode_key as key,
+    ///     extensions_unicode_value as value,
+    /// };
     ///
-    /// let key: Key = "ca".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// let value: Value = "buddhist".parse()
-    ///     .expect("Failed to parse a Value.");
-    /// let keywords: Keywords = vec![(key, value)].into_iter().collect();
+    /// let keywords = vec![(key!("ca"), value!("buddhist"))]
+    ///     .into_iter()
+    ///     .collect::<Keywords>();
     ///
-    /// let key: Key = "ca".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// assert_eq!(
-    ///     keywords.get(&key).map(|v| v.to_string()),
-    ///     Some("buddhist".to_string())
-    /// );
+    /// assert_eq!(keywords.get(&key!("ca")), Some(&value!("buddhist")));
     /// ```
     pub fn get<Q>(&self, key: &Q) -> Option<&Value>
     where
@@ -164,24 +167,19 @@ impl Keywords {
     /// # Examples
     ///
     /// ```
-    /// use icu::locid::extensions::unicode::{Keywords, Key, Value};
+    /// use icu::locid::{
+    ///     extensions::unicode::Keywords, extensions_unicode_key as key,
+    ///     extensions_unicode_value as value,
+    /// };
     ///
-    /// let key: Key = "ca".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// let value: Value = "buddhist".parse()
-    ///     .expect("Failed to parse a Value.");
-    /// let mut keywords: Keywords = vec![(key, value)].into_iter().collect();
+    /// let mut keywords = vec![(key!("ca"), value!("buddhist"))]
+    ///     .into_iter()
+    ///     .collect::<Keywords>();
     ///
-    /// let key: Key = "ca".parse()
-    ///     .expect("Failed to parse a Key.");
-    /// if let Some(value) = keywords.get_mut(&key) {
-    ///     *value = "gregory".parse()
-    ///         .expect("Failed to parse a Value.");
+    /// if let Some(value) = keywords.get_mut(&key!("ca")) {
+    ///     *value = value!("gregory");
     /// }
-    /// assert_eq!(
-    ///     keywords.get(&key).map(|v| v.to_string()),
-    ///     Some("gregory".to_string())
-    /// );
+    /// assert_eq!(keywords.get(&key!("ca")), Some(&value!("gregory")));
     /// ```
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
     where
@@ -196,45 +194,63 @@ impl Keywords {
     /// # Examples
     ///
     /// ```
-    /// use std::str::FromStr;
-    /// use std::string::ToString;
-    /// use icu::locid::unicode_ext_key;
-    /// use icu::locid::Locale;
     /// use icu::locid::extensions::unicode::Key;
     /// use icu::locid::extensions::unicode::Value;
+    /// use icu::locid::Locale;
+    /// use icu::locid::{
+    ///     extensions_unicode_key as key, extensions_unicode_value as value,
+    /// };
     ///
-    /// const CA_KEY: Key = unicode_ext_key!("ca");
-    /// let japanese = Value::from_str("japanese").expect("valid extension subtag");
-    /// let buddhist = Value::from_str("buddhist").expect("valid extension subtag");
-    ///
-    /// let mut loc: Locale = "und-u-hello-ca-buddhist-hc-h12".parse()
+    /// let mut loc: Locale = "und-u-hello-ca-buddhist-hc-h12"
+    ///     .parse()
     ///     .expect("valid BCP-47 identifier");
-    /// let old_value = loc.extensions.unicode.keywords.set(
-    ///     CA_KEY,
-    ///     japanese
-    /// );
+    /// let old_value = loc
+    ///     .extensions
+    ///     .unicode
+    ///     .keywords
+    ///     .set(key!("ca"), value!("japanese"));
     ///
-    /// assert_eq!(old_value, Some(buddhist));
-    /// assert_eq!(loc, "und-u-hello-ca-japanese-hc-h12");
+    /// assert_eq!(old_value, Some(value!("buddhist")));
+    /// assert_eq!(loc, "und-u-hello-ca-japanese-hc-h12".parse().unwrap());
     /// ```
     pub fn set(&mut self, key: Key, value: Value) -> Option<Value> {
         self.0.insert(key, value)
     }
 
+    /// Removes the specified keyword, returning the old value if it existed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use icu::locid::extensions::unicode::Key;
+    /// use icu::locid::extensions_unicode_key as key;
+    /// use icu::locid::Locale;
+    ///
+    /// let mut loc: Locale = "und-u-hello-ca-buddhist-hc-h12"
+    ///     .parse()
+    ///     .expect("valid BCP-47 identifier");
+    /// loc.extensions.unicode.keywords.remove(key!("ca"));
+    /// assert_eq!(loc, "und-u-hello-hc-h12".parse().unwrap());
+    /// ```
+    pub fn remove<Q: Borrow<Key>>(&mut self, key: Q) -> Option<Value> {
+        self.0.remove(key.borrow())
+    }
+
     /// Clears all Unicode extension keywords, leaving Unicode attributes.
+    ///
+    /// Returns the old Unicode extension keywords.
     ///
     /// # Example
     ///
     /// ```
-    /// use std::str::FromStr;
     /// use icu::locid::Locale;
     ///
     /// let mut loc: Locale = "und-u-hello-ca-buddhist-hc-h12".parse().unwrap();
     /// loc.extensions.unicode.keywords.clear();
-    /// assert_eq!(loc, "und-u-hello");
+    /// assert_eq!(loc, "und-u-hello".parse().unwrap());
     /// ```
-    pub fn clear(&mut self) {
-        self.0.clear();
+    pub fn clear(&mut self) -> Self {
+        core::mem::take(self)
     }
 
     /// Retains a subset of keywords as specified by the predicate function.
@@ -242,22 +258,118 @@ impl Keywords {
     /// # Examples
     ///
     /// ```
+    /// use icu::locid::extensions_unicode_key as key;
     /// use icu::locid::Locale;
-    /// use std::str::FromStr;
     ///
     /// let mut loc: Locale = "und-u-ca-buddhist-hc-h12-ms-metric".parse().unwrap();
     ///
-    /// loc.extensions.unicode.keywords.retain_by_key(|k| k == "hc");
-    /// assert_eq!(loc, "und-u-hc-h12");
+    /// loc.extensions
+    ///     .unicode
+    ///     .keywords
+    ///     .retain_by_key(|&k| k == key!("hc"));
+    /// assert_eq!(loc, "und-u-hc-h12".parse().unwrap());
     ///
-    /// loc.extensions.unicode.keywords.retain_by_key(|k| k == "ms");
-    /// assert_eq!(loc, "und");
+    /// loc.extensions
+    ///     .unicode
+    ///     .keywords
+    ///     .retain_by_key(|&k| k == key!("ms"));
+    /// assert_eq!(loc, Locale::UND);
     /// ```
     pub fn retain_by_key<F>(&mut self, mut predicate: F)
     where
         F: FnMut(&Key) -> bool,
     {
         self.0.retain(|k, _| predicate(k))
+    }
+
+    /// Compare this [`Keywords`] with BCP-47 bytes.
+    ///
+    /// The return value is equivalent to what would happen if you first converted this
+    /// [`Keywords`] to a BCP-47 string and then performed a byte comparison.
+    ///
+    /// This function is case-sensitive and results in a *total order*, so it is appropriate for
+    /// binary search. The only argument producing [`Ordering::Equal`] is `self.to_string()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use icu::locid::extensions::unicode::Keywords;
+    /// use icu::locid::Locale;
+    /// use std::cmp::Ordering;
+    ///
+    /// let bcp47_strings: &[&str] =
+    ///     &["ca-hebrew", "ca-japanese", "ca-japanese-nu-latn", "nu-latn"];
+    ///
+    /// for ab in bcp47_strings.windows(2) {
+    ///     let a = ab[0];
+    ///     let b = ab[1];
+    ///     assert!(a.cmp(b) == Ordering::Less);
+    ///     let a_kwds = format!("und-u-{}", a)
+    ///         .parse::<Locale>()
+    ///         .unwrap()
+    ///         .extensions
+    ///         .unicode
+    ///         .keywords;
+    ///     assert!(a_kwds.strict_cmp(a.as_bytes()) == Ordering::Equal);
+    ///     assert!(a_kwds.strict_cmp(b.as_bytes()) == Ordering::Less);
+    /// }
+    /// ```
+    pub fn strict_cmp(&self, other: &[u8]) -> Ordering {
+        self.strict_cmp_iter(other.split(|b| *b == b'-')).end()
+    }
+
+    /// Compare this [`Keywords`] with an iterator of BCP-47 subtags.
+    ///
+    /// This function has the same equality semantics as [`Keywords::strict_cmp`]. It is intended as
+    /// a more modular version that allows multiple subtag iterators to be chained together.
+    ///
+    /// For an additional example, see [`SubtagOrderingResult`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use icu::locid::extensions::unicode::Keywords;
+    /// use icu::locid::locale;
+    /// use std::cmp::Ordering;
+    ///
+    /// let subtags: &[&[u8]] = &[b"ca", b"buddhist"];
+    ///
+    /// let kwds = locale!("und-u-ca-buddhist").extensions.unicode.keywords;
+    /// assert_eq!(
+    ///     Ordering::Equal,
+    ///     kwds.strict_cmp_iter(subtags.iter().copied()).end()
+    /// );
+    ///
+    /// let kwds = locale!("und").extensions.unicode.keywords;
+    /// assert_eq!(
+    ///     Ordering::Less,
+    ///     kwds.strict_cmp_iter(subtags.iter().copied()).end()
+    /// );
+    ///
+    /// let kwds = locale!("und-u-nu-latn").extensions.unicode.keywords;
+    /// assert_eq!(
+    ///     Ordering::Greater,
+    ///     kwds.strict_cmp_iter(subtags.iter().copied()).end()
+    /// );
+    /// ```
+    pub fn strict_cmp_iter<'l, I>(&self, mut subtags: I) -> SubtagOrderingResult<I>
+    where
+        I: Iterator<Item = &'l [u8]>,
+    {
+        let r = self.for_each_subtag_str(&mut |subtag| {
+            if let Some(other) = subtags.next() {
+                match subtag.as_bytes().cmp(other) {
+                    Ordering::Equal => Ok(()),
+                    not_equal => Err(not_equal),
+                }
+            } else {
+                Err(Ordering::Greater)
+            }
+        });
+        match r {
+            Ok(_) => SubtagOrderingResult::Subtags(subtags),
+            Err(o) => SubtagOrderingResult::Ordering(o),
+        }
     }
 
     pub(crate) fn for_each_subtag_str<E, F>(&self, f: &mut F) -> Result<(), E>
@@ -278,8 +390,8 @@ impl Keywords {
     }
 }
 
-impl From<LiteMap<Key, Value>> for Keywords {
-    fn from(map: LiteMap<Key, Value>) -> Self {
+impl From<LiteMap<Key, Value, ShortSlice<(Key, Value)>>> for Keywords {
+    fn from(map: LiteMap<Key, Value, ShortSlice<(Key, Value)>>) -> Self {
         Self(map)
     }
 }

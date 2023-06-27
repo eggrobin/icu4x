@@ -2,7 +2,6 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use core::convert::TryFrom;
 use core::isize;
 use core::num::ParseIntError;
 use core::str::FromStr;
@@ -33,28 +32,38 @@ use fixed_decimal::FixedDecimal;
 ///
 /// ```
 /// use icu::plurals::PluralOperands;
-/// assert_eq!(PluralOperands {
-///    i: 2,
-///    v: 0,
-///    w: 0,
-///    f: 0,
-///    t: 0,
-///    c: 0,
-/// }, PluralOperands::from(2_usize))
+/// use icu_plurals::rules::RawPluralOperands;
+///
+/// assert_eq!(
+///     PluralOperands::from(RawPluralOperands {
+///         i: 2,
+///         v: 0,
+///         w: 0,
+///         f: 0,
+///         t: 0,
+///         c: 0,
+///     }),
+///     PluralOperands::from(2_usize)
+/// );
 /// ```
 ///
 /// From &str
 ///
 /// ```
 /// use icu::plurals::PluralOperands;
-/// assert_eq!(Ok(PluralOperands {
-///    i: 123,
-///    v: 2,
-///    w: 2,
-///    f: 45,
-///    t: 45,
-///    c: 0,
-/// }), "123.45".parse())
+/// use icu_plurals::rules::RawPluralOperands;
+///
+/// assert_eq!(
+///     Ok(PluralOperands::from(RawPluralOperands {
+///         i: 123,
+///         v: 2,
+///         w: 2,
+///         f: 45,
+///         t: 45,
+///         c: 0,
+///     })),
+///     "123.45".parse()
+/// );
 /// ```
 ///
 /// From [`FixedDecimal`]
@@ -62,42 +71,35 @@ use fixed_decimal::FixedDecimal;
 /// ```
 /// use fixed_decimal::FixedDecimal;
 /// use icu::plurals::PluralOperands;
-/// assert_eq!(Ok(PluralOperands {
-///    i: 123,
-///    v: 2,
-///    w: 2,
-///    f: 45,
-///    t: 45,
-///    c: 0,
-/// }), FixedDecimal::from(12345).multiplied_pow10(-2).map(|d| (&d).into()))
+/// use icu_plurals::rules::RawPluralOperands;
+///
+/// assert_eq!(
+///     PluralOperands::from(RawPluralOperands {
+///         i: 123,
+///         v: 2,
+///         w: 2,
+///         f: 45,
+///         t: 45,
+///         c: 0,
+///     }),
+///     (&FixedDecimal::from(12345).multiplied_pow10(-2)).into()
+/// );
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[allow(clippy::exhaustive_structs)] // mostly stable, new operands may be added at the cadence of ICU's release cycle
 pub struct PluralOperands {
     /// Integer value of input
-    pub i: u64,
+    pub(crate) i: u64,
     /// Number of visible fraction digits with trailing zeros
-    pub v: usize,
+    pub(crate) v: usize,
     /// Number of visible fraction digits without trailing zeros
-    pub w: usize,
+    pub(crate) w: usize,
     /// Visible fraction digits with trailing zeros
-    pub f: u64,
+    pub(crate) f: u64,
     /// Visible fraction digits without trailing zeros
-    pub t: u64,
+    pub(crate) t: u64,
     /// Exponent of the power of 10 used in compact decimal formatting
-    pub c: usize,
-}
-
-impl PluralOperands {
-    /// Returns the number represented by this [`PluralOperands`] as floating point.
-    /// The precision of the number returned is up to the representation accuracy
-    /// of a double.
-    ///
-    /// This method requires the `"std"` feature be enabled
-    #[cfg(feature = "std")]
-    pub fn n(&self) -> f64 {
-        let fraction = self.t as f64 / 10_f64.powi(self.v as i32);
-        self.i as f64 + fraction
-    }
+    pub(crate) c: usize,
 }
 
 #[derive(Display, Debug, PartialEq, Eq)]
@@ -128,11 +130,8 @@ impl From<std::io::Error> for OperandsError {
 }
 
 fn get_exponent(input: &str) -> Result<(&str, usize), OperandsError> {
-    if let Some(e_idx) = input.find('e') {
-        #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        let e = usize::from_str(&input[e_idx + 1..])?;
-        #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
-        Ok((&input[..e_idx], e))
+    if let Some((base, exponent)) = input.split_once('e') {
+        Ok((base, exponent.parse()?))
     } else {
         Ok((input, 0))
     }
@@ -155,18 +154,15 @@ impl FromStr for PluralOperands {
             fraction_digits0,
             fraction_digits,
             exponent,
-        ) = if let Some(sep_idx) = abs_str.find('.') {
-            #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
-            let int_str = &abs_str[..sep_idx];
-            #[allow(clippy::indexing_slicing)] // TODO(#1668) Clippy exceptions need docs or fixing.
-            let (dec_str, exponent) = get_exponent(&abs_str[(sep_idx + 1)..])?;
+        ) = if let Some((int_str, rest)) = abs_str.split_once('.') {
+            let (dec_str, exponent) = get_exponent(rest)?;
 
             let integer_digits = u64::from_str(int_str)?;
 
             let dec_str_no_zeros = dec_str.trim_end_matches('0');
 
-            let num_fraction_digits0 = dec_str.len() as usize;
-            let num_fraction_digits = dec_str_no_zeros.len() as usize;
+            let num_fraction_digits0 = dec_str.len();
+            let num_fraction_digits = dec_str_no_zeros.len();
 
             let fraction_digits0 = u64::from_str(dec_str)?;
             let fraction_digits =
@@ -204,6 +200,7 @@ impl FromStr for PluralOperands {
 macro_rules! impl_integer_type {
     ($ty:ident) => {
         impl From<$ty> for PluralOperands {
+            #[inline]
             fn from(input: $ty) -> Self {
                 Self {
                     i: input as u64,
@@ -223,18 +220,10 @@ macro_rules! impl_integer_type {
 
 macro_rules! impl_signed_integer_type {
     ($ty:ident) => {
-        impl TryFrom<$ty> for PluralOperands {
-            type Error = OperandsError;
-            fn try_from(input: $ty) -> Result<Self, Self::Error> {
-                let x = input.checked_abs().ok_or(OperandsError::Invalid)?;
-                Ok(Self {
-                    i: x as u64,
-                    v: 0,
-                    w: 0,
-                    f: 0,
-                    t: 0,
-                    c: 0,
-                })
+        impl From<$ty> for PluralOperands {
+            #[inline]
+            fn from(input: $ty) -> Self {
+                input.unsigned_abs().into()
             }
         }
     };

@@ -2,17 +2,21 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use super::{runtime::Pattern, PatternItem};
-use crate::pattern::{reference, runtime};
+use super::{reference, runtime, PatternItem};
 use crate::{fields, options::preferences};
-#[cfg(feature = "datagen")]
+#[cfg(all(feature = "datagen"))]
 use crate::{provider, skeleton};
-use icu_provider::{yoke, zerofrom};
+use icu_provider::prelude::*;
 
 /// Used to represent either H11/H12, or H23/H24. Skeletons only store these
 /// hour cycles as H12 or H23.
 #[derive(Debug, PartialEq, Clone, Copy, yoke::Yokeable, zerofrom::ZeroFrom)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "datagen",
+    derive(serde::Serialize, databake::Bake),
+    databake(path = icu_datetime::pattern),
+)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[allow(clippy::exhaustive_enums)] // this type is stable
 pub enum CoarseHourCycle {
     /// Can either be fields::Hour::H11 or fields::Hour::H12
@@ -52,7 +56,7 @@ impl CoarseHourCycle {
     /// Invoke the pattern matching machinery to transform the hour cycle of a pattern. This provides
     /// a safe mapping from a h11/h12 to h23/h24 for transforms.
     #[doc(hidden)]
-    #[cfg(feature = "datagen")]
+    #[cfg(all(feature = "datagen"))]
     pub fn apply_on_pattern<'data>(
         &self,
         date_time: &provider::calendar::patterns::GenericLengthPatternsV1<'data>,
@@ -114,10 +118,10 @@ impl CoarseHourCycle {
 /// and between h23 and h24. This function is naive as it is assumed that this application of
 /// the hour cycle will not change between h1x to h2x.
 pub(crate) fn naively_apply_preferences(
-    pattern: &mut Pattern,
+    pattern: &mut runtime::Pattern,
     preferences: &Option<preferences::Bag>,
 ) {
-    // If there is a preference overiding the hour cycle, apply it now.
+    // If there is a preference overriding the hour cycle, apply it now.
     if let Some(preferences::Bag {
         hour_cycle: Some(hour_cycle),
     }) = preferences

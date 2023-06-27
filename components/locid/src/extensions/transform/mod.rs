@@ -12,25 +12,23 @@
 //! # Examples
 //!
 //! ```
+//! use icu::locid::extensions::transform::{Fields, Key, Transform, Value};
 //! use icu::locid::{LanguageIdentifier, Locale};
-//! use icu::locid::extensions::transform::{Transform, Fields, Key, Value};
 //!
-//! let mut loc: Locale = "en-US-t-es-AR-h0-hybrid".parse()
-//!     .expect("Parsing failed.");
+//! let mut loc: Locale =
+//!     "en-US-t-es-AR-h0-hybrid".parse().expect("Parsing failed.");
 //!
-//! let lang: LanguageIdentifier = "es-AR".parse()
-//!     .expect("Parsing LanguageIdentifier failed.");
+//! let lang: LanguageIdentifier =
+//!     "es-AR".parse().expect("Parsing LanguageIdentifier failed.");
 //!
-//! let key: Key = "h0".parse()
-//!     .expect("Parsing key failed.");
-//! let value: Value = "hybrid".parse()
-//!     .expect("Parsing value failed.");
+//! let key: Key = "h0".parse().expect("Parsing key failed.");
+//! let value: Value = "hybrid".parse().expect("Parsing value failed.");
 //!
 //! assert_eq!(loc.extensions.transform.lang, Some(lang));
 //! assert!(loc.extensions.transform.fields.contains_key(&key));
 //! assert_eq!(loc.extensions.transform.fields.get(&key), Some(&value));
 //!
-//! assert_eq!(&loc.extensions.transform.to_string(), "-t-es-AR-h0-hybrid");
+//! assert_eq!(&loc.extensions.transform.to_string(), "t-es-AR-h0-hybrid");
 //! ```
 mod fields;
 mod key;
@@ -40,11 +38,11 @@ pub use fields::Fields;
 pub use key::Key;
 pub use value::Value;
 
+use crate::helpers::ShortSlice;
 use crate::parser::SubtagIterator;
 use crate::parser::{parse_language_identifier_from_iter, ParserError, ParserMode};
 use crate::subtags::Language;
 use crate::LanguageIdentifier;
-use alloc::vec;
 use litemap::LiteMap;
 
 /// A list of [`Unicode BCP47 T Extensions`] as defined in [`Unicode Locale
@@ -57,31 +55,29 @@ use litemap::LiteMap;
 /// # Examples
 ///
 /// ```
-/// use icu::locid::{Locale, LanguageIdentifier};
 /// use icu::locid::extensions::transform::{Key, Value};
+/// use icu::locid::{LanguageIdentifier, Locale};
 ///
-/// let mut loc: Locale = "de-t-en-US-h0-hybrid".parse()
-///     .expect("Parsing failed.");
+/// let mut loc: Locale =
+///     "de-t-en-US-h0-hybrid".parse().expect("Parsing failed.");
 ///
-/// let en_us: LanguageIdentifier = "en-US".parse()
-///     .expect("Parsing failed.");
+/// let en_us: LanguageIdentifier = "en-US".parse().expect("Parsing failed.");
 ///
 /// assert_eq!(loc.extensions.transform.lang, Some(en_us));
 /// let key: Key = "h0".parse().expect("Parsing key failed.");
 /// let value: Value = "hybrid".parse().expect("Parsing value failed.");
-/// assert_eq!(
-///     loc.extensions.transform.fields.get(&key),
-///     Some(&value)
-/// );
+/// assert_eq!(loc.extensions.transform.fields.get(&key), Some(&value));
 /// ```
 /// [`Unicode BCP47 T Extensions`]: https://unicode.org/reports/tr35/#t_Extension
 /// [`RFC 6497`]: https://www.ietf.org/rfc/rfc6497.txt
 /// [`Unicode Locale Identifier`]: https://unicode.org/reports/tr35/#Unicode_locale_identifier
-#[derive(Clone, PartialEq, Eq, Debug, Default, Hash, PartialOrd, Ord)]
-#[allow(missing_docs)] // TODO(#1028) - Add missing docs.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Hash)]
 #[allow(clippy::exhaustive_structs)] // spec-backed stable datastructure
 pub struct Transform {
+    /// The [`LanguageIdentifier`] specified with this locale extension, or `None` if not present.
     pub lang: Option<LanguageIdentifier>,
+    /// The key-value pairs present in this locale extension, with each extension key subtag
+    /// associated to its provided value subtag.
     pub fields: Fields,
 }
 
@@ -110,10 +106,9 @@ impl Transform {
     /// ```
     /// use icu::locid::Locale;
     ///
-    /// let mut loc: Locale = "en-US-t-es-AR".parse()
-    ///     .expect("Parsing failed.");
+    /// let mut loc: Locale = "en-US-t-es-AR".parse().expect("Parsing failed.");
     ///
-    /// assert_eq!(loc.extensions.transform.is_empty(), false);
+    /// assert!(!loc.extensions.transform.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
         self.lang.is_none() && self.fields.is_empty()
@@ -128,7 +123,7 @@ impl Transform {
     ///
     /// let mut loc: Locale = "en-US-t-es-AR".parse().unwrap();
     /// loc.extensions.transform.clear();
-    /// assert_eq!(loc, "en-US");
+    /// assert_eq!(loc, "en-US".parse().unwrap());
     /// ```
     pub fn clear(&mut self) {
         self.lang = None;
@@ -140,7 +135,7 @@ impl Transform {
         let mut tfields = LiteMap::new();
 
         if let Some(subtag) = iter.peek() {
-            if Language::from_bytes(subtag).is_ok() {
+            if Language::try_from_bytes(subtag).is_ok() {
                 tlang = Some(parse_language_identifier_from_iter(
                     iter,
                     ParserMode::Partial,
@@ -149,24 +144,27 @@ impl Transform {
         }
 
         let mut current_tkey = None;
-        let mut current_tvalue = vec![];
+        let mut current_tvalue = ShortSlice::new();
+        let mut has_current_tvalue = false;
 
         while let Some(subtag) = iter.peek() {
             if let Some(tkey) = current_tkey {
                 if let Ok(val) = Value::parse_subtag(subtag) {
-                    current_tvalue.push(val);
+                    has_current_tvalue = true;
+                    if let Some(val) = val {
+                        current_tvalue.push(val);
+                    }
                 } else {
-                    if current_tvalue.is_empty() {
+                    if !has_current_tvalue {
                         return Err(ParserError::InvalidExtension);
                     }
-                    tfields.try_insert(
-                        tkey,
-                        Value::from_vec_unchecked(current_tvalue.drain(..).flatten().collect()),
-                    );
+                    tfields.try_insert(tkey, Value::from_short_slice_unchecked(current_tvalue));
                     current_tkey = None;
+                    current_tvalue = ShortSlice::new();
+                    has_current_tvalue = false;
                     continue;
                 }
-            } else if let Ok(tkey) = Key::from_bytes(subtag) {
+            } else if let Ok(tkey) = Key::try_from_bytes(subtag) {
                 current_tkey = Some(tkey);
             } else {
                 break;
@@ -176,13 +174,10 @@ impl Transform {
         }
 
         if let Some(tkey) = current_tkey {
-            if current_tvalue.is_empty() {
+            if !has_current_tvalue {
                 return Err(ParserError::InvalidExtension);
             }
-            tfields.try_insert(
-                tkey,
-                Value::from_vec_unchecked(current_tvalue.into_iter().flatten().collect()),
-            );
+            tfields.try_insert(tkey, Value::from_short_slice_unchecked(current_tvalue));
         }
 
         Ok(Self {
@@ -206,18 +201,14 @@ impl Transform {
     }
 }
 
-impl core::fmt::Display for Transform {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        writeable::Writeable::write_to(self, f)
-    }
-}
+writeable::impl_display_with_writeable!(Transform);
 
 impl writeable::Writeable for Transform {
     fn write_to<W: core::fmt::Write + ?Sized>(&self, sink: &mut W) -> core::fmt::Result {
         if self.is_empty() {
             return Ok(());
         }
-        sink.write_str("-t")?;
+        sink.write_str("t")?;
         if let Some(lang) = &self.lang {
             sink.write_char('-')?;
             writeable::Writeable::write_to(lang, sink)?;
@@ -229,16 +220,16 @@ impl writeable::Writeable for Transform {
         Ok(())
     }
 
-    fn write_len(&self) -> writeable::LengthHint {
+    fn writeable_length_hint(&self) -> writeable::LengthHint {
         if self.is_empty() {
             return writeable::LengthHint::exact(0);
         }
-        let mut result = writeable::LengthHint::exact(2);
+        let mut result = writeable::LengthHint::exact(1);
         if let Some(lang) = &self.lang {
-            result += writeable::Writeable::write_len(lang) + 1;
+            result += writeable::Writeable::writeable_length_hint(lang) + 1;
         }
         if !self.fields.is_empty() {
-            result += writeable::Writeable::write_len(&self.fields) + 1;
+            result += writeable::Writeable::writeable_length_hint(&self.fields) + 1;
         }
         result
     }
