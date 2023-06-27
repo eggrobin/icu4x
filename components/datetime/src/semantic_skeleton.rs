@@ -6,6 +6,7 @@
 /// opposed to a whole month, week, or quarter).
 /// Only sets that yield “sensible” dates are allowed: this type cannot
 /// describe a date such as “a Tuesday in 2023”.
+#[derive(Debug)]
 pub enum DayComponents {
     /// The day of the month, as in “on the 1st”.
     Day,
@@ -32,6 +33,7 @@ pub enum DayComponents {
 /// A specification for a set of parts of a date.
 /// Only sets that yield “sensible” dates are allowed: this type cannot describe
 /// a date such as “fourth quarter, Anno Domini”.
+#[derive(Debug)]
 pub enum DateComponents {
     /// A date that specifies a single day.  Prefer constructing using [`Into`].
     Day(DayComponents),
@@ -60,7 +62,7 @@ impl From<DayComponents> for DateComponents {
     }
 }
 
-///
+#[derive(Debug)]
 pub enum TimeComponents {
     Hour,
     DayPeriodHour12,
@@ -76,36 +78,56 @@ pub enum TimeComponents {
     Hour24MinuteSecond,
 }
 
+/// A specification for the length of a date or component of a date.
+#[derive(Debug)]
 pub enum Length {
+    /// A long date, typically spelled-out, as in “January 1, 2000”.
     Long,
+    /// A medium-sized date; typically abbreviated, as in “Jan. 1, 2000”.
     Medium,
+    /// A short date; typically numeric, as in “1/1/2000”.
     Short,
 }
 
+#[derive(Debug, Default)]
 pub enum TimeZoneStyle {
-    // Los Angeles time or Pacific Daylight Time, as is appropriate for the locale.
-    // Note: for now, this is always identical to [`SpecificNonLocation`] (Pacific Daylight Time),
-    // but whether it is [`NonLocation`] or [`SpecificNonLocation`] will be locale-dependent in the future; see https://unicode-org.atlassian.net/browse/CLDR-15566.
+    /// The location format, e.g., “Los Angeles time” or specific non-location
+    /// format “Pacific Daylight Time”, whichever is idiomatic for the locale.
+    /// > Note: for now, this is always identical to
+    /// > [`TimeZoneStyle::SpecificNonLocation`] (Pacific Daylight Time), but
+    /// > whether it is [`TimeZoneStyle::NonLocation`] or
+    /// > [`TimeZoneStyle::SpecificNonLocation`] will be locale-dependent in the
+    /// > future; see
+    /// > [CLDR-15566](https://unicode-org.atlassian.net/browse/CLDR-15566).
+    #[default]
     Default,
+    /// The location format, e.g., “Los Angeles time”.
     Location,
+    /// The generic non-location format, e.g., “Pacific Time”.
     NonLocation,
+    /// The specific non-location format, e.g., “Pacific Daylight Time”.
     SpecificNonLocation,
+    /// The offset from UTC format, e.g., “GMT−8”.
     Offset,
 }
 
-impl Default for TimeZoneStyle {
-    fn default() -> Self {
-        TimeZoneStyle::Default
-    }
-}
-
-#[derive(Default)]
+/// Specification of a time zone style with an optional length.
+#[derive(Debug, Default)]
 pub struct TimeZone {
+    /// The length of the time zone format, i.e., with
+    /// `style`=[`TimeZoneStyle::NonLocation`], whether to format as “Pacific
+    /// Time” ([`Length::Long`]) or “PT” ([`Length::Short`]).
+    /// If this is [`None`], the length is deduced from the [`Length`] of the
+    /// enclosing [`SemanticSkeleton`] when formatting.
     pub length: Option<Length>,
+    /// The style, i.e., with `length`=[`Length::Short`], whether to format as
+    /// “GMT−8” ([`TimeZoneStyle::Offset`]) or “PT”
+    /// ([`TimeZoneStyle::NonLocation`]).
     pub style: TimeZoneStyle,
 }
 
 /// A [`SemanticSkeleton`]
+#[derive(Debug)]
 pub enum SemanticSkeleton {
     Date(Length, DateComponents),
     Time(Length, TimeComponents),
