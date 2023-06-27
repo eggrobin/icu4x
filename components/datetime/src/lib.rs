@@ -91,6 +91,7 @@ pub mod options;
 pub mod pattern;
 pub mod provider;
 pub(crate) mod raw;
+pub mod semantic_skeleton;
 #[doc(hidden)]
 #[allow(clippy::exhaustive_structs, clippy::exhaustive_enums)] // private-ish module
 pub mod skeleton;
