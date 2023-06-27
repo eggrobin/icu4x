@@ -2,6 +2,8 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
+use crate::options::length::Time;
+
 /// A specification for a set of parts of a date that specifies a single day (as
 /// opposed to a whole month, week, or quarter).
 /// Only sets that yield “sensible” dates are allowed: this type cannot
@@ -65,16 +67,16 @@ impl From<DayComponents> for DateComponents {
 #[derive(Debug)]
 pub enum TimeComponents {
     Hour,
+    HourMinute,
+    HourMinuteSecond,
     DayPeriodHour12,
     Hour12,
-    Hour24,
-    HourMinute,
     DayPeriodHour12Minute,
     Hour12Minute,
-    Hour24Minute,
-    HourMinuteSecond,
     DayPeriodHour12MinuteSecond,
     Hour12MinuteSecond,
+    Hour24,
+    Hour24Minute,
     Hour24MinuteSecond,
 }
 
@@ -114,25 +116,40 @@ pub enum TimeZoneStyle {
 /// Specification of a time zone style with an optional length.
 #[derive(Debug, Default)]
 pub struct TimeZone {
-    /// The length of the time zone format, i.e., with
+    /// The length of the time zone format, _i.e._, with
     /// `style`=[`TimeZoneStyle::NonLocation`], whether to format as “Pacific
     /// Time” ([`Length::Long`]) or “PT” ([`Length::Short`]).
     /// If this is [`None`], the length is deduced from the [`Length`] of the
     /// enclosing [`SemanticSkeleton`] when formatting.
     pub length: Option<Length>,
-    /// The style, i.e., with `length`=[`Length::Short`], whether to format as
+    /// The style, _i.e._, with `length`=[`Length::Short`], whether to format as
     /// “GMT−8” ([`TimeZoneStyle::Offset`]) or “PT”
     /// ([`TimeZoneStyle::NonLocation`]).
     pub style: TimeZoneStyle,
 }
 
-/// A [`SemanticSkeleton`]
+#[derive(Debug)]
+pub struct DateSkeleton {
+    pub length: Length,
+    pub components: DateComponents
+}
+
+#[derive(Debug)]
+pub struct TimeSkeleton {
+    pub length: Length,
+    pub components: TimeComponents
+}
+
+#[derive(Debug)]
+pub struct DateTimeSkeleton {
+    pub length: Length,
+    pub date: DayComponents,
+    pub time: TimeComponents
+}
+
 #[derive(Debug)]
 pub enum SemanticSkeleton {
-    Date(Length, DateComponents),
-    Time(Length, TimeComponents),
-    DateTime(Length, DayComponents, TimeComponents),
-    DateTimeZone(Length, DateComponents, TimeZone),
-    TimeTimeZone(Length, TimeComponents, TimeZone),
-    DateTimeTimeZone(Length, DayComponents, TimeComponents, TimeZone),
+    Date(DateSkeleton, Option<TimeZone>),
+    Time(TimeSkeleton, Option<TimeZone>),
+    DateTime(TimeSkeleton, Option<TimeZone>),
 }
