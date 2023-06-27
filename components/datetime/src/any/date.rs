@@ -192,9 +192,7 @@ impl DateFormatter {
         length: length::Date,
     ) -> Result<Self, DateTimeError>
     where
-        P: DataProvider<TimeSymbolsV1Marker>
-            + DataProvider<TimeLengthsV1Marker>
-            + DataProvider<OrdinalV1Marker>
+        P: DataProvider<OrdinalV1Marker>
             + DataProvider<WeekDataV1Marker>
             + DataProvider<DecimalSymbolsV1Marker>
             + DataProvider<GregorianDateLengthsV1Marker>
