@@ -62,7 +62,7 @@ pub(crate) mod preferences;
 pub enum DateTimeFormatterOptions {
     /// Bag of lengths for date and time.
     Length(length::Bag),
-    /// Bag of components describing which fields and how should be displayed.
+    /// TODO(egg): words.
     ///
     /// <div class="stab unstable">
     /// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
@@ -71,7 +71,7 @@ pub enum DateTimeFormatterOptions {
     /// <a href="https://github.com/unicode-org/icu4x/issues/1317">#1317</a>
     /// </div>
     #[cfg(feature = "experimental")]
-    Components(components::Bag),
+    Skeleton(semantic_skeleton::Skeleton),
 }
 
 impl Default for DateTimeFormatterOptions {

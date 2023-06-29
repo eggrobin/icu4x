@@ -6,7 +6,8 @@
 /// opposed to a whole month, week, or quarter).
 /// Only sets that yield “sensible” dates are allowed: this type cannot
 /// describe a date such as “some Tuesday in 2023”.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DayComponents {
     /// The day of the month, as in “on the 1st”.
     Day,
@@ -33,7 +34,8 @@ pub enum DayComponents {
 /// A specification for a set of parts of a date.
 /// Only sets that yield “sensible” dates are allowed: this type cannot describe
 /// a date such as “fourth quarter, Anno Domini”.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DateComponents {
     /// A date that specifies a single day.  Prefer constructing using [`Into`].
     Day(DayComponents),
@@ -62,7 +64,8 @@ impl From<DayComponents> for DateComponents {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TimeComponents {
     Hour,
     HourMinute,
@@ -84,7 +87,7 @@ pub enum TimeComponents {
 /// [`crate::options::length::Date`], this has only three levels, with no
 /// `Full`; this is because `Full` corresponds to additional components,
 /// rather than to making the components wider than in `Long`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Length {
     /// A long date, typically spelled-out, as in “January 1, 2000”.
     Long,
@@ -94,7 +97,8 @@ pub enum Length {
     Short,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub enum TimeZoneStyle {
     /// The location format, e.g., “Los Angeles time” or specific non-location
     /// format “Pacific Daylight Time”, whichever is idiomatic for the locale.
@@ -117,7 +121,7 @@ pub enum TimeZoneStyle {
 }
 
 /// Specification of a time zone style with an optional length.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TimeZone {
     /// The length of the time zone format, _i.e._, with
     /// `style`=[`TimeZoneStyle::NonLocation`], whether to format as “Pacific
@@ -131,27 +135,27 @@ pub struct TimeZone {
     pub style: TimeZoneStyle,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DateSkeleton {
     pub length: Length,
     pub components: DateComponents
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TimeSkeleton {
     pub length: Length,
     pub components: TimeComponents
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DateTimeSkeleton {
     pub length: Length,
     pub date: DayComponents,
     pub time: TimeComponents
 }
 
-#[derive(Debug)]
-pub enum SemanticSkeleton {
+#[derive(Debug, Clone)]
+pub enum Skeleton {
     Date(DateSkeleton, Option<TimeZone>),
     Time(TimeSkeleton, Option<TimeZone>),
     DateTime(TimeSkeleton, Option<TimeZone>),
