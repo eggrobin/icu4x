@@ -28,6 +28,8 @@
 
 #[cfg(any(feature = "datagen", feature = "experimental"))]
 pub mod components;
+#[cfg(feature = "experimental")]
+pub mod semantic_skeleton;
 pub mod length;
 
 #[cfg(any(feature = "datagen", feature = "experimental"))]

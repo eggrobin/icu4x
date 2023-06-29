@@ -2,12 +2,10 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-use crate::options::length::Time;
-
 /// A specification for a set of parts of a date that specifies a single day (as
 /// opposed to a whole month, week, or quarter).
 /// Only sets that yield “sensible” dates are allowed: this type cannot
-/// describe a date such as “a Tuesday in 2023”.
+/// describe a date such as “some Tuesday in 2023”.
 #[derive(Debug)]
 pub enum DayComponents {
     /// The day of the month, as in “on the 1st”.
@@ -81,6 +79,11 @@ pub enum TimeComponents {
 }
 
 /// A specification for the length of a date or component of a date.
+///
+/// Contrary to [`crate::options::length::Time`] and
+/// [`crate::options::length::Date`], this has only three levels, with no
+/// `Full`; this is because `Full` corresponds to additional components,
+/// rather than to making the components wider than in `Long`.
 #[derive(Debug)]
 pub enum Length {
     /// A long date, typically spelled-out, as in “January 1, 2000”.
