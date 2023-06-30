@@ -31,6 +31,57 @@ pub enum DayComponents {
     Weekday,
 }
 
+impl DayComponents {
+    pub fn matches_symbols<I>(&self, symbols: I) -> bool
+    where
+        I: IntoIterator<Item = crate::fields::FieldSymbol>,
+    {
+        symbols
+            .into_iter()
+            .zip(self.symbol_matchers())
+            .all(|(symbol, component_matches)| component_matches(symbol))
+    }
+
+    fn symbol_matchers(&self) -> &'static [fn(crate::fields::symbols::FieldSymbol) -> bool] {
+        use crate::fields::FieldSymbol::*;
+        match self {
+            DayComponents::Day => &[|s| matches!(s, Day(_))],
+            DayComponents::MonthDay => &[|s| matches!(s, Month(_)), |s| matches!(s, Day(_))],
+            DayComponents::YearMonthDay => &[
+                |s| matches!(s, Year(_)),
+                |s| matches!(s, Month(_)),
+                |s| matches!(s, Day(_)),
+            ],
+            DayComponents::EraYearMonthDay => &[
+                |s| matches!(s, Era),
+                |s| matches!(s, Year(_)),
+                |s| matches!(s, Month(_)),
+                |s| matches!(s, Day(_)),
+            ],
+            DayComponents::DayWeekday => &[|s| matches!(s, Day(_)), |s| matches!(s, Weekday(_))],
+            DayComponents::MonthDayWeekday => &[
+                |s| matches!(s, Month(_)),
+                |s| matches!(s, Day(_)),
+                |s| matches!(s, Weekday(_)),
+            ],
+            DayComponents::YearMonthDayWeekday => &[
+                |s| matches!(s, Year(_)),
+                |s| matches!(s, Month(_)),
+                |s| matches!(s, Day(_)),
+                |s| matches!(s, Weekday(_)),
+            ],
+            DayComponents::EraYearMonthDayWeekday => &[
+                |s| matches!(s, Era),
+                |s| matches!(s, Year(_)),
+                |s| matches!(s, Month(_)),
+                |s| matches!(s, Day(_)),
+                |s| matches!(s, Weekday(_)),
+            ],
+            DayComponents::Weekday => &[|s| matches!(s, Weekday(_))],
+        }
+    }
+}
+
 /// A specification for a set of parts of a date.
 /// Only sets that yield “sensible” dates are allowed: this type cannot describe
 /// a date such as “fourth quarter, Anno Domini”.
@@ -55,7 +106,40 @@ pub enum DateComponents {
     Quarter,
     /// The year and quarter of the year, as in “1st quarter of 2000”.
     YearQuarter,
+}
 
+impl DateComponents {
+    pub fn matches_symbols<I>(&self, symbols: I) -> bool
+    where
+        I: IntoIterator<Item = crate::fields::FieldSymbol>,
+    {
+        if let DateComponents::Day(components) = self {
+            components.matches_symbols(symbols)
+        } else {
+            symbols
+                .into_iter()
+                .zip(self.symbol_matchers())
+                .all(|(symbol, component_matches)| component_matches(symbol))
+        }
+    }
+
+    fn symbol_matchers(&self) -> &'static [fn(crate::fields::symbols::FieldSymbol) -> bool] {
+        use crate::fields::FieldSymbol::*;
+        match self {
+            DateComponents::Day(components) => unreachable!("Day handled by the caller"),
+            DateComponents::Month => &[|s| matches!(s, Month(_))],
+            DateComponents::YearMonth => &[|s| matches!(s, Month(_))],
+            DateComponents::EraYearMonth => &[
+                |s| matches!(s, Era),
+                |s| matches!(s, Year(_)),
+                |s| matches!(s, Month(_)),
+            ],
+            DateComponents::Year => &[|s| matches!(s, Year(_))],
+            DateComponents::EraYear => &[|s| matches!(s, Era), |s| matches!(s, Year(_))],
+            DateComponents::YearWeek => &[|s| matches!(s, Year(_)), |s| matches!(s, Week(_))],
+            DateComponents::Quarter | DateComponents::YearQuarter => &[|s| false], // No quarter support, see #501.
+        }
+    }
 }
 
 impl From<DayComponents> for DateComponents {
@@ -79,6 +163,40 @@ pub enum TimeComponents {
     Hour24,
     Hour24Minute,
     Hour24MinuteSecond,
+}
+
+impl TimeComponents {
+    pub fn matches_symbols<I>(&self, symbols: I) -> bool
+    where
+        I: IntoIterator<Item = crate::fields::FieldSymbol>,
+    {
+        symbols
+            .into_iter()
+            .zip(self.symbol_matchers())
+            .all(|(symbol, component_matches)| component_matches(symbol))
+    }
+
+    fn symbol_matchers(&self) -> &'static [fn(crate::fields::symbols::FieldSymbol) -> bool] {
+        use crate::fields::FieldSymbol::*;
+        match self {
+            TimeComponents::Hour | TimeComponents::Hour12 | TimeComponents::Hour24 => {
+                &[|s| matches!(s, Hour(_))]
+            }
+            TimeComponents::HourMinute
+            | TimeComponents::Hour12Minute
+            | TimeComponents::Hour24Minute => &[|s| matches!(s, Hour(_)), |s| matches!(s, Minute)],
+            TimeComponents::HourMinuteSecond
+            | TimeComponents::Hour12MinuteSecond
+            | TimeComponents::Hour24MinuteSecond => &[
+                |s| matches!(s, Hour(_)),
+                |s| matches!(s, Minute),
+                |s| matches!(s, Second(_)),
+            ],
+            TimeComponents::DayPeriodHour12
+            | TimeComponents::DayPeriodHour12Minute
+            | TimeComponents::DayPeriodHour12MinuteSecond => &[|s| false], // No day period support, see #487.
+        }
+    }
 }
 
 /// A specification for the length of a date or component of a date.
@@ -138,25 +256,43 @@ pub struct TimeZone {
 #[derive(Debug, Clone)]
 pub struct DateSkeleton {
     pub length: Length,
-    pub components: DateComponents
+    pub components: DateComponents,
+}
+
+impl DateTimeSkeleton {
+    pub fn matches_symbols<I>(&self, symbols: I) -> bool
+    where
+        I: IntoIterator<Item = crate::fields::FieldSymbol>,
+    {
+        use crate::fields::FieldSymbol::*;
+        self.date.matches_symbols(
+            symbols
+                .into_iter()
+                .filter(|field| !matches!(field, Hour(_) | Minute | Second(_) | TimeZone(_))),
+        ) && self.time.matches_symbols(
+            symbols
+                .into_iter()
+                .filter(|field| matches!(field, Hour(_) | Minute | Second(_) | TimeZone(_))),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct TimeSkeleton {
     pub length: Length,
-    pub components: TimeComponents
+    pub components: TimeComponents,
 }
 
 #[derive(Debug, Clone)]
 pub struct DateTimeSkeleton {
     pub length: Length,
     pub date: DayComponents,
-    pub time: TimeComponents
+    pub time: TimeComponents,
 }
 
 #[derive(Debug, Clone)]
 pub enum Skeleton {
     Date(DateSkeleton, Option<TimeZone>),
     Time(TimeSkeleton, Option<TimeZone>),
-    DateTime(TimeSkeleton, Option<TimeZone>),
+    DateTime(DateTimeSkeleton, Option<TimeZone>),
 }

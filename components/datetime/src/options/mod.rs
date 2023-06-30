@@ -28,9 +28,9 @@
 
 #[cfg(any(feature = "datagen", feature = "experimental"))]
 pub mod components;
+pub mod length;
 #[cfg(feature = "experimental")]
 pub mod semantic_skeleton;
-pub mod length;
 
 #[cfg(any(feature = "datagen", feature = "experimental"))]
 pub mod preferences;
@@ -87,8 +87,8 @@ impl From<length::Bag> for DateTimeFormatterOptions {
 }
 
 #[cfg(feature = "experimental")]
-impl From<components::Bag> for DateTimeFormatterOptions {
-    fn from(input: components::Bag) -> Self {
-        Self::Components(input)
+impl From<semantic_skeleton::Skeleton> for DateTimeFormatterOptions {
+    fn from(input: semantic_skeleton::Skeleton) -> Self {
+        Self::Skeleton(input)
     }
 }

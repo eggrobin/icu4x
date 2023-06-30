@@ -7,7 +7,10 @@
 use crate::error::DateTimeError;
 use crate::fields;
 use crate::input;
+use crate::options::semantic_skeleton;
+use crate::options::semantic_skeleton::Length;
 use crate::options::{length, preferences, DateTimeFormatterOptions};
+use crate::pattern::reference::pattern;
 use crate::pattern::{hour_cycle, runtime::PatternPlurals};
 use crate::provider;
 use crate::provider::calendar::patterns::PatternPluralsV1;
@@ -247,34 +250,72 @@ where
         match options {
             DateTimeFormatterOptions::Length(bag) => selector
                 .pattern_for_length_bag(bag, Some(preferences::Bag::from_data_locale(locale))),
-            DateTimeFormatterOptions::Components(bag) => selector.patterns_for_components_bag(bag),
+            DateTimeFormatterOptions::Skeleton(bag) => selector.patterns_for_skeleton(bag),
         }
     }
 
-    /// Determine the appropriate `PatternPlurals` for a given `options::components::Bag`.
-    fn patterns_for_components_bag(
+    /// Determine the appropriate [`PatternPlurals`] for a given [`semantic_skeleton::Skeleton`].
+    fn patterns_for_skeleton(
         self,
-        components: &components::Bag,
+        input_skeleton: &semantic_skeleton::Skeleton,
     ) -> Result<DataPayload<PatternPluralsFromPatternsV1Marker>> {
-        use crate::skeleton;
-        let skeletons_data = self.skeleton_data_payload()?;
-        // Not all skeletons are currently supported.
-        let requested_fields = components.to_vec_fields();
-        let patterns = match skeleton::create_best_pattern_for_fields(
-            skeletons_data.get(),
-            &self.date_patterns_data.get().length_combinations,
-            &requested_fields,
-            components,
-            false, // Prefer the requested fields over the matched pattern.
-        ) {
-            skeleton::BestSkeleton::AllFieldsMatch(pattern)
-            | skeleton::BestSkeleton::MissingOrExtraFields(pattern) => Some(pattern),
-            skeleton::BestSkeleton::NoMatch => None,
+        use semantic_skeleton::Skeleton::*;
+        let payload = self.skeleton_data_payload()?;
+        match input_skeleton {
+            DateTime(datetime, _) => {
+                let pattern = payload.get().0
+                    .iter()
+                    .filter(|(skeleton, _)| {
+                        datetime.matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
+                    })
+                    .next()
+                    .map(|(_, pattern)| pattern);
+                if let Some(p) = pattern {
+                    return Ok(DataPayload::from_owned(PatternPluralsV1(
+                        p.clone().into_owned(),
+                    )));
+                }
+                let mut date_pattern = 
+                    payload.get().0
+                        .iter()
+                        .filter(|(skeleton, _)| {
+                            datetime
+                                .date
+                                .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
+                        })
+                        .next()
+                        .unwrap().1.clone();
+                let time_pattern = payload.get().0
+                    .iter()
+                    .filter(|(skeleton, _)| {
+                        datetime
+                            .date
+                            .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
+                    })
+                    .next()
+                    .map(|(_, pattern)| pattern);
+                let glue = match datetime.length {
+                    Length::Long => &self.date_patterns_data.get().length_combinations.long,
+                    Length::Medium => &self.date_patterns_data.get().length_combinations.medium,
+                    Length::Short => &self.date_patterns_data.get().length_combinations.short,
+                };
+                date_pattern.for_each_mut(|pattern| {
+                    *pattern =
+                        glue.clone()
+                            .combined(
+                                pattern.clone(),
+                                time_pattern.unwrap().clone().expect_pattern(
+                                    "Only date patterns can contain plural variants",
+                                ),
+                            )
+                            .expect("Meow");
+                });
+                Ok(DataPayload::from_owned(PatternPluralsV1(date_pattern)))
+            }
+            _ => {
+                unimplemented!("Meow")
+            }
         }
-        .ok_or(DateTimeError::UnsupportedOptions)?;
-        Ok(DataPayload::from_owned(PatternPluralsV1(
-            patterns.into_owned(),
-        )))
     }
 
     #[cfg(feature = "experimental")]
