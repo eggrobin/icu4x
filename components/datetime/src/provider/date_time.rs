@@ -263,7 +263,9 @@ where
         let payload = self.skeleton_data_payload()?;
         match input_skeleton {
             DateTime(datetime, _) => {
-                let pattern = payload.get().0
+                let pattern = payload
+                    .get()
+                    .0
                     .iter()
                     .filter(|(skeleton, _)| {
                         datetime.matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
@@ -275,8 +277,10 @@ where
                         p.clone().into_owned(),
                     )));
                 }
-                let mut date_pattern = 
-                    payload.get().0
+
+                Ok(payload.map_project(|payload, _dummy| {
+                    let mut date_pattern = payload
+                        .0
                         .iter()
                         .filter(|(skeleton, _)| {
                             datetime
@@ -284,24 +288,27 @@ where
                                 .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
                         })
                         .next()
-                        .unwrap().1.clone();
-                let time_pattern = payload.get().0
-                    .iter()
-                    .filter(|(skeleton, _)| {
-                        datetime
-                            .date
-                            .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
-                    })
-                    .next()
-                    .map(|(_, pattern)| pattern);
-                let glue = match datetime.length {
-                    Length::Long => &self.date_patterns_data.get().length_combinations.long,
-                    Length::Medium => &self.date_patterns_data.get().length_combinations.medium,
-                    Length::Short => &self.date_patterns_data.get().length_combinations.short,
-                };
-                date_pattern.for_each_mut(|pattern| {
-                    *pattern =
-                        glue.clone()
+                        .unwrap()
+                        .1
+                        .clone();
+                    let time_pattern = payload
+                        .0
+                        .iter()
+                        .filter(|(skeleton, _)| {
+                            datetime
+                                .time
+                                .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
+                        })
+                        .next()
+                        .map(|(_, pattern)| pattern);
+                    let glue = match datetime.length {
+                        Length::Long => &self.date_patterns_data.get().length_combinations.long,
+                        Length::Medium => &self.date_patterns_data.get().length_combinations.medium,
+                        Length::Short => &self.date_patterns_data.get().length_combinations.short,
+                    };
+                    date_pattern.for_each_mut(|pattern| {
+                        *pattern = glue
+                            .clone()
                             .combined(
                                 pattern.clone(),
                                 time_pattern.unwrap().clone().expect_pattern(
@@ -309,8 +316,9 @@ where
                                 ),
                             )
                             .expect("Meow");
-                });
-                Ok(DataPayload::from_owned(PatternPluralsV1(date_pattern)))
+                    });
+                    PatternPluralsV1(date_pattern)
+                }))
             }
             _ => {
                 unimplemented!("Meow")
