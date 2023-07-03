@@ -13,7 +13,9 @@ use crate::options::semantic_skeleton;
 use crate::options::semantic_skeleton::Length;
 use crate::options::{length, preferences, DateTimeFormatterOptions};
 use crate::pattern::reference::pattern;
+use crate::pattern::runtime;
 use crate::pattern::runtime::GenericPattern;
+use crate::pattern::PatternItem;
 use crate::pattern::{hour_cycle, runtime::PatternPlurals};
 use crate::provider;
 use crate::provider::calendar::patterns::PatternPluralsV1;
@@ -271,8 +273,10 @@ where
                     .0
                     .iter()
                     .filter(|(skeleton, _)| {
-                        datetime.matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol)) &&
-                        skeleton.0 .0.iter().all(|field|datetime.length.is_compatible_with_skeleton_field(field))
+                        datetime.matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
+                            && skeleton.0 .0.iter().all(|field| {
+                                datetime.length.is_compatible_with_skeleton_field(field)
+                            })
                     })
                     .next()
                     .map(|(_, pattern)| pattern);
@@ -289,8 +293,10 @@ where
                         .filter(|(skeleton, _)| {
                             datetime
                                 .date
-                                .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol)) &&
-                            skeleton.0 .0.iter().all(|field|datetime.length.is_compatible_with_skeleton_field(field))
+                                .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
+                                && skeleton.0 .0.iter().all(|field| {
+                                    datetime.length.is_compatible_with_skeleton_field(field)
+                                })
                         })
                         .next()
                         .unwrap();
@@ -302,14 +308,15 @@ where
                                 .time
                                 .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
                         })
-                        .next().unwrap();
+                        .next()
+                        .unwrap();
                     let glue: &GenericPattern = match datetime.length {
                         Length::Long => &self.date_patterns_data.get().length_combinations.long,
                         Length::Medium => &self.date_patterns_data.get().length_combinations.medium,
                         Length::Short => &self.date_patterns_data.get().length_combinations.short,
                     };
-                    let date_time_pattern = date_pattern.clone();
-                    date_time_pattern.clone().for_each_mut(|pattern| {
+                    let mut date_time_pattern = date_pattern.clone();
+                    date_time_pattern.for_each_mut(|pattern| {
                         *pattern = glue
                             .clone()
                             .combined(
@@ -319,6 +326,47 @@ where
                                 ),
                             )
                             .expect("Meow");
+                        runtime::helpers::maybe_replace(pattern, |item| {
+                            if let crate::pattern::PatternItem::Field(pattern_field) = item {
+                                let skeleton_field = date_skeleton.0 .0.iter().find(|field| {
+                                    field.symbol.discriminant_cmp(&pattern_field.symbol).is_eq()
+                                });
+                                if skeleton_field.is_some_and(|field| {
+                                    field.length
+                                        == (match datetime.length {
+                                            Length::Long => fields::FieldLength::Wide,
+                                            Length::Medium => fields::FieldLength::Abbreviated,
+                                            Length::Short => fields::FieldLength::Abbreviated,
+                                        })
+                                }) {
+                                    return None;
+                                }
+                                let pattern_field_length =
+                                if matches!(pattern_field.symbol, fields::symbols::FieldSymbol::Weekday(_)) &&
+                                pattern_field.length == fields::FieldLength::One { fields::FieldLength::Abbreviated } else { pattern_field.length };
+                                return match pattern_field_length {
+                                    fields::FieldLength::Abbreviated => match datetime.length {
+                                        Length::Long => Some(PatternItem::Field(
+                                            (
+                                                pattern_field.symbol,
+                                                fields::FieldLength::Wide,
+                                            )
+                                                .into(),
+                                        )),
+                                        Length::Medium | Length::Short => None,
+                                    },
+                                    fields::FieldLength::Wide => match datetime.length {
+                                        Length::Long => None,
+                                        Length::Medium | Length::Short => Some(PatternItem::Field(
+                                            (pattern_field.symbol, fields::FieldLength::Abbreviated)
+                                                .into(),
+                                        )),
+                                    },
+                                    _ => None,
+                                };
+                            }
+                            None
+                        })
                     });
                     PatternPluralsV1(date_time_pattern)
                 }))

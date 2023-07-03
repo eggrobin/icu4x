@@ -221,21 +221,17 @@ impl Length {
     /// Whether the given field can be part of a skeleton describing a pattern
     /// that can be adjusted to this length.
     pub fn is_compatible_with_skeleton_field(&self, field: &crate::fields::Field) -> bool {
+        use crate::fields::{FieldLength::*, FieldSymbol::*};
         use Length::*;
-        use crate::fields::{FieldSymbol::*, FieldLength::*};
         match self {
-            Long | Medium =>
-              match field.symbol {
-                  Month(_) =>
-                    matches!(field.length, Abbreviated | Wide),
-                  _ => true
-              }
-            Short =>
-                match field.symbol {
-                    Month(_) =>
-                      matches!(field.length, One | TwoDigit),
-                    _ => true
-                }
+            Long | Medium => match field.symbol {
+                Month(_) => matches!(field.length, Abbreviated | Wide),
+                _ => true,
+            },
+            Short => match field.symbol {
+                Month(_) => matches!(field.length, One | TwoDigit),
+                _ => true,
+            },
         }
     }
 }
