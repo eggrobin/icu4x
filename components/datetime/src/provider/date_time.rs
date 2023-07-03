@@ -7,10 +7,13 @@
 use crate::error::DateTimeError;
 use crate::fields;
 use crate::input;
+#[cfg(feature = "experimental")]
 use crate::options::semantic_skeleton;
+#[cfg(feature = "experimental")]
 use crate::options::semantic_skeleton::Length;
 use crate::options::{length, preferences, DateTimeFormatterOptions};
 use crate::pattern::reference::pattern;
+use crate::pattern::runtime::GenericPattern;
 use crate::pattern::{hour_cycle, runtime::PatternPlurals};
 use crate::provider;
 use crate::provider::calendar::patterns::PatternPluralsV1;
@@ -268,7 +271,8 @@ where
                     .0
                     .iter()
                     .filter(|(skeleton, _)| {
-                        datetime.matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
+                        datetime.matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol)) &&
+                        skeleton.0 .0.iter().all(|field|datetime.length.is_compatible_with_skeleton_field(field))
                     })
                     .next()
                     .map(|(_, pattern)| pattern);
@@ -279,19 +283,18 @@ where
                 }
 
                 Ok(payload.map_project(|payload, _dummy| {
-                    let mut date_pattern = payload
+                    let (date_skeleton, date_pattern) = payload
                         .0
                         .iter()
                         .filter(|(skeleton, _)| {
                             datetime
                                 .date
-                                .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
+                                .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol)) &&
+                            skeleton.0 .0.iter().all(|field|datetime.length.is_compatible_with_skeleton_field(field))
                         })
                         .next()
-                        .unwrap()
-                        .1
-                        .clone();
-                    let time_pattern = payload
+                        .unwrap();
+                    let (time_skeleton, time_pattern) = payload
                         .0
                         .iter()
                         .filter(|(skeleton, _)| {
@@ -299,25 +302,25 @@ where
                                 .time
                                 .matches_symbols(skeleton.0 .0.iter().map(|field| field.symbol))
                         })
-                        .next()
-                        .map(|(_, pattern)| pattern);
-                    let glue = match datetime.length {
+                        .next().unwrap();
+                    let glue: &GenericPattern = match datetime.length {
                         Length::Long => &self.date_patterns_data.get().length_combinations.long,
                         Length::Medium => &self.date_patterns_data.get().length_combinations.medium,
                         Length::Short => &self.date_patterns_data.get().length_combinations.short,
                     };
-                    date_pattern.for_each_mut(|pattern| {
+                    let date_time_pattern = date_pattern.clone();
+                    date_time_pattern.clone().for_each_mut(|pattern| {
                         *pattern = glue
                             .clone()
                             .combined(
                                 pattern.clone(),
-                                time_pattern.unwrap().clone().expect_pattern(
+                                time_pattern.clone().expect_pattern(
                                     "Only date patterns can contain plural variants",
                                 ),
                             )
                             .expect("Meow");
                     });
-                    PatternPluralsV1(date_pattern)
+                    PatternPluralsV1(date_time_pattern)
                 }))
             }
             _ => {

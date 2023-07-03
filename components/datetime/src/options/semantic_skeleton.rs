@@ -36,13 +36,16 @@ impl DayComponents {
     where
         I: IntoIterator<Item = crate::fields::FieldSymbol>,
     {
-        symbols
-            .into_iter()
-            .zip(self.symbol_matchers())
-            .all(|(symbol, component_matches)| component_matches(symbol))
+        let mut symbol = symbols.into_iter();
+        for is_match in self.symbol_matchers() {
+            if !symbol.next().is_some_and(is_match) {
+                return false;
+            }
+        }
+        symbol.next().is_none()
     }
 
-    fn symbol_matchers(&self) -> &'static [fn(crate::fields::symbols::FieldSymbol) -> bool] {
+    pub fn symbol_matchers(&self) -> &'static [fn(crate::fields::symbols::FieldSymbol) -> bool] {
         use crate::fields::FieldSymbol::*;
         match self {
             DayComponents::Day => &[|s| matches!(s, Day(_))],
@@ -113,17 +116,16 @@ impl DateComponents {
     where
         I: IntoIterator<Item = crate::fields::FieldSymbol>,
     {
-        if let DateComponents::Day(components) = self {
-            components.matches_symbols(symbols)
-        } else {
-            symbols
-                .into_iter()
-                .zip(self.symbol_matchers())
-                .all(|(symbol, component_matches)| component_matches(symbol))
+        let mut symbol = symbols.into_iter();
+        for is_match in self.symbol_matchers() {
+            if !symbol.next().is_some_and(is_match) {
+                return false;
+            }
         }
+        symbol.next().is_none()
     }
 
-    fn symbol_matchers(&self) -> &'static [fn(crate::fields::symbols::FieldSymbol) -> bool] {
+    pub fn symbol_matchers(&self) -> &'static [fn(crate::fields::symbols::FieldSymbol) -> bool] {
         use crate::fields::FieldSymbol::*;
         match self {
             DateComponents::Day(components) => unreachable!("Day handled by the caller"),
@@ -215,6 +217,29 @@ pub enum Length {
     Short,
 }
 
+impl Length {
+    /// Whether the given field can be part of a skeleton describing a pattern
+    /// that can be adjusted to this length.
+    pub fn is_compatible_with_skeleton_field(&self, field: &crate::fields::Field) -> bool {
+        use Length::*;
+        use crate::fields::{FieldSymbol::*, FieldLength::*};
+        match self {
+            Long | Medium =>
+              match field.symbol {
+                  Month(_) =>
+                    matches!(field.length, Abbreviated | Wide),
+                  _ => true
+              }
+            Short =>
+                match field.symbol {
+                    Month(_) =>
+                      matches!(field.length, One | TwoDigit),
+                    _ => true
+                }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub enum TimeZoneStyle {
@@ -264,16 +289,18 @@ impl DateTimeSkeleton {
     where
         I: IntoIterator<Item = crate::fields::FieldSymbol>,
     {
-        use crate::fields::FieldSymbol::*;
-        self.date.matches_symbols(
-            symbols
-                .into_iter()
-                .filter(|field| !matches!(field, Hour(_) | Minute | Second(_) | TimeZone(_))),
-        ) && self.time.matches_symbols(
-            symbols
-                .into_iter()
-                .filter(|field| matches!(field, Hour(_) | Minute | Second(_) | TimeZone(_))),
-        )
+        let mut symbol = symbols.into_iter();
+        for is_match in self.date.symbol_matchers() {
+            if !symbol.next().is_some_and(is_match) {
+                return false;
+            }
+        }
+        for is_match in self.time.symbol_matchers() {
+            if !symbol.next().is_some_and(is_match) {
+                return false;
+            }
+        }
+        symbol.next().is_none()
     }
 }
 

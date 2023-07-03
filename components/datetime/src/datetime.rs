@@ -616,19 +616,19 @@ where {
     ///
     /// ```
     /// use icu::calendar::{DateTime, Gregorian};
-    /// use icu::datetime::{options::components, TypedDateTimeFormatter};
+    /// use icu::datetime::{options::semantic_skeleton::{DateTimeSkeleton, Length::*, DayComponents::*, TimeComponents::*}, TypedDateTimeFormatter};
     /// use icu::locid::locale;
     /// use icu_provider::AsDeserializingBufferProvider;
     /// use writeable::assert_writeable_eq;
     ///
-    /// let mut options = components::Bag::default();
-    /// options.year = Some(components::Year::Numeric);
-    /// options.month = Some(components::Month::Long);
+    /// let mut skeleton = DateTimeSkeleton{length: Long,
+    /// date: MonthDayWeekday,
+    /// time: Hour};
     ///
     /// let dtf =
     ///     TypedDateTimeFormatter::<Gregorian>::try_new_experimental(
     ///         &locale!("en").into(),
-    ///         options.into(),
+    ///         skeleton.into(),
     ///     )
     ///     .unwrap();
     ///
@@ -687,29 +687,7 @@ where {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use icu::calendar::{DateTime, Gregorian};
-    /// use icu::datetime::{options::components, TypedDateTimeFormatter};
-    /// use icu::locid::locale;
-    /// use icu_provider::AsDeserializingBufferProvider;
-    /// use writeable::assert_writeable_eq;
-    ///
-    /// let mut options = components::Bag::default();
-    /// options.year = Some(components::Year::Numeric);
-    /// options.month = Some(components::Month::Long);
-    ///
-    /// let dtf =
-    ///     TypedDateTimeFormatter::<Gregorian>::try_new_experimental(
-    ///         &locale!("en").into(),
-    ///         options.into(),
-    ///     )
-    ///     .unwrap();
-    ///
-    /// let datetime =
-    ///     DateTime::try_new_gregorian_datetime(2022, 8, 31, 1, 2, 3).unwrap();
-    ///
-    /// assert_writeable_eq!(dtf.format(&datetime), "August 2022");
-    /// ```
+    /// TODO
     ///
     /// [data provider]: icu_provider
     #[cfg(feature = "experimental")]

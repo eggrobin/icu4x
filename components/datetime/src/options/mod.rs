@@ -92,3 +92,24 @@ impl From<semantic_skeleton::Skeleton> for DateTimeFormatterOptions {
         Self::Skeleton(input)
     }
 }
+
+#[cfg(feature = "experimental")]
+impl From<semantic_skeleton::DateTimeSkeleton> for DateTimeFormatterOptions {
+    fn from(input: semantic_skeleton::DateTimeSkeleton) -> Self {
+        Self::Skeleton(semantic_skeleton::Skeleton::DateTime(input, None))
+    }
+}
+
+#[cfg(feature = "experimental")]
+impl From<semantic_skeleton::DateSkeleton> for DateTimeFormatterOptions {
+    fn from(input: semantic_skeleton::DateSkeleton) -> Self {
+        Self::Skeleton(semantic_skeleton::Skeleton::Date(input, None))
+    }
+}
+
+#[cfg(feature = "experimental")]
+impl From<semantic_skeleton::TimeSkeleton> for DateTimeFormatterOptions {
+    fn from(input: semantic_skeleton::TimeSkeleton) -> Self {
+        Self::Skeleton(semantic_skeleton::Skeleton::Time(input, None))
+    }
+}
