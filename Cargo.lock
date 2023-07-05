@@ -1444,6 +1444,7 @@ dependencies = [
  "icu_casemapping_data",
  "icu_collections",
  "icu_locid",
+ "icu_normalizer",
  "icu_provider",
  "serde",
  "writeable",
