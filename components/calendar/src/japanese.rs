@@ -72,6 +72,10 @@ use tinystr::{tinystr, TinyStr16};
 ///
 /// These eras are loaded from data, requiring a data provider capable of providing [`JapaneseErasV1Marker`]
 /// data (`calendar/japanese@1`).
+///
+/// # Month codes
+///
+/// This calendar supports 12 solar month codes (`"M01" - "M12"`)
 #[derive(Clone, Debug, Default)]
 pub struct Japanese {
     eras: DataPayload<JapaneseErasV1Marker>,
@@ -110,12 +114,12 @@ pub struct JapaneseDateInner {
 }
 
 impl Japanese {
-    /// Creates a new [`Japanese`] using only modern eras (post-meiji).
+    /// Creates a new [`Japanese`] using only modern eras (post-meiji) from compiled data.
     ///
-    /// ✨ **Enabled with the `"data"` feature.**
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
     ///
     /// [📚 Help choosing a constructor](icu_provider::constructors)
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     pub const fn new() -> Self {
         Self {
             eras: DataPayload::from_static_ref(
@@ -136,10 +140,10 @@ impl Japanese {
 
     #[doc = icu_provider::gen_any_buffer_unstable_docs!(UNSTABLE, Self::new)]
     pub fn try_new_unstable<D: DataProvider<JapaneseErasV1Marker> + ?Sized>(
-        data_provider: &D,
+        provider: &D,
     ) -> Result<Self, CalendarError> {
         Ok(Self {
-            eras: data_provider.load(Default::default())?.take_payload()?,
+            eras: provider.load(Default::default())?.take_payload()?,
         })
     }
 
@@ -151,7 +155,7 @@ impl Japanese {
         day: u8,
         debug_name: &'static str,
     ) -> Result<JapaneseDateInner, CalendarError> {
-        let month = crate::calendar_arithmetic::ordinal_solar_month_from_code(month_code);
+        let month = crate::calendar_arithmetic::ordinal_month_from_code(month_code);
         let month = if let Some(month) = month {
             month
         } else {
@@ -164,15 +168,17 @@ impl Japanese {
 
         self.new_japanese_date_inner(era, year, month, day)
     }
+
+    pub(crate) const DEBUG_NAME: &str = "Japanese";
 }
 
 impl JapaneseExtended {
-    /// Creates a new [`Japanese`] from using all eras (including pre-meiji).
+    /// Creates a new [`Japanese`] from using all eras (including pre-meiji) from compiled data.
     ///
-    /// ✨ **Enabled with the `"data"` feature.**
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
     ///
     /// [📚 Help choosing a constructor](icu_provider::constructors)
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     pub const fn new() -> Self {
         Self(Japanese {
             eras: DataPayload::from_static_ref(
@@ -193,15 +199,14 @@ impl JapaneseExtended {
 
     #[doc = icu_provider::gen_any_buffer_unstable_docs!(UNSTABLE, Self::new)]
     pub fn try_new_unstable<D: DataProvider<JapaneseExtendedErasV1Marker> + ?Sized>(
-        data_provider: &D,
+        provider: &D,
     ) -> Result<Self, CalendarError> {
         Ok(Self(Japanese {
-            eras: data_provider
-                .load(Default::default())?
-                .take_payload()?
-                .cast(),
+            eras: provider.load(Default::default())?.take_payload()?.cast(),
         }))
     }
+
+    pub(crate) const DEBUG_NAME: &str = "Japanese (histocial era data)";
 }
 
 impl Calendar for Japanese {
@@ -234,7 +239,7 @@ impl Calendar for Japanese {
         Iso.months_in_year(&date.inner)
     }
 
-    fn days_in_year(&self, date: &Self::DateInner) -> u32 {
+    fn days_in_year(&self, date: &Self::DateInner) -> u16 {
         Iso.days_in_year(&date.inner)
     }
 
@@ -304,7 +309,7 @@ impl Calendar for Japanese {
     }
 
     fn debug_name(&self) -> &'static str {
-        "Japanese (Modern eras only)"
+        Self::DEBUG_NAME
     }
 
     fn any_calendar_kind(&self) -> Option<AnyCalendarKind> {
@@ -338,7 +343,7 @@ impl Calendar for JapaneseExtended {
         Japanese::months_in_year(&self.0, date)
     }
 
-    fn days_in_year(&self, date: &Self::DateInner) -> u32 {
+    fn days_in_year(&self, date: &Self::DateInner) -> u16 {
         Japanese::days_in_year(&self.0, date)
     }
 
@@ -390,7 +395,7 @@ impl Calendar for JapaneseExtended {
     }
 
     fn debug_name(&self) -> &'static str {
-        "Japanese (With historical eras)"
+        Self::DEBUG_NAME
     }
 
     fn any_calendar_kind(&self) -> Option<AnyCalendarKind> {
@@ -931,7 +936,7 @@ mod tests {
             4,
             3,
             1,
-            CalendarError::UnknownEra("hakuho-672".parse().unwrap(), "Japanese (Modern eras only)"),
+            CalendarError::UnknownEra("hakuho-672".parse().unwrap(), "Japanese"),
         );
 
         // handle bce/ce

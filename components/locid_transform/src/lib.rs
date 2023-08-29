@@ -25,8 +25,7 @@
 //! use icu::locid::Locale;
 //! use icu::locid_transform::{LocaleCanonicalizer, TransformResult};
 //!
-//! let lc = LocaleCanonicalizer::try_new_unstable(&icu_testdata::unstable())
-//!     .expect("create failed");
+//! let lc = LocaleCanonicalizer::new();
 //!
 //! let mut locale: Locale = "ja-Latn-fonipa-hepburn-heploc"
 //!     .parse()
@@ -39,8 +38,7 @@
 //! use icu::locid::locale;
 //! use icu::locid_transform::{LocaleExpander, TransformResult};
 //!
-//! let lc = LocaleExpander::try_new_unstable(&icu_testdata::unstable())
-//!     .expect("create failed");
+//! let lc = LocaleExpander::new();
 //!
 //! let mut locale = locale!("zh-CN");
 //! assert_eq!(lc.maximize(&mut locale), TransformResult::Modified);
@@ -56,8 +54,7 @@
 //! use icu::locid_transform::{LocaleExpander, TransformResult};
 //! use writeable::assert_writeable_eq;
 //!
-//! let lc = LocaleExpander::try_new_unstable(&icu_testdata::unstable())
-//!     .expect("create failed");
+//! let lc = LocaleExpander::new();
 //!
 //! let mut locale = locale!("zh-Hans-CN");
 //! assert_eq!(lc.minimize(&mut locale), TransformResult::Modified);
@@ -117,16 +114,3 @@ pub enum TransformResult {
 
 #[doc(no_inline)]
 pub use LocaleTransformError as Error;
-
-#[cfg(feature = "data")]
-#[doc(hidden)]
-pub mod data {
-    use icu_locid_transform_data::*;
-
-    use crate as icu_locid_transform;
-    pub(crate) struct Provider;
-    impl_locid_transform_aliases_v1!(Provider);
-    impl_locid_transform_likelysubtags_l_v1!(Provider);
-    impl_locid_transform_likelysubtags_sr_v1!(Provider);
-    impl_locid_transform_likelysubtags_ext_v1!(Provider);
-}

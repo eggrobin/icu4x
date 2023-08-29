@@ -106,6 +106,15 @@ pub struct CodePointSetDataBorrowed<'a> {
     set: &'a PropertyCodePointSetV1<'a>,
 }
 
+impl CodePointSetDataBorrowed<'static> {
+    /// Cheaply converts a `CodePointSetDataBorrowed<'static>` into a `CodePointSetData`.
+    pub const fn static_to_owned(self) -> CodePointSetData {
+        CodePointSetData {
+            data: DataPayload::from_static_ref(self.set),
+        }
+    }
+}
+
 impl<'a> CodePointSetDataBorrowed<'a> {
     /// Check if the set contains a character
     ///
@@ -294,6 +303,15 @@ impl<'a> UnicodeSetDataBorrowed<'a> {
     }
 }
 
+impl UnicodeSetDataBorrowed<'static> {
+    /// Cheaply converts a `UnicodeSetDataBorrowed<'static>` into a `UnicodeSetData`.
+    pub const fn static_to_owned(self) -> UnicodeSetData {
+        UnicodeSetData {
+            data: DataPayload::from_static_ref(self.set),
+        }
+    }
+}
+
 pub(crate) fn load_set_data<M, P>(provider: &P) -> Result<CodePointSetData, PropertiesError>
 where
     M: KeyedDataMarker<Yokeable = PropertyCodePointSetV1<'static>>,
@@ -322,10 +340,10 @@ macro_rules! make_code_point_set_property {
         $cvis:vis const fn $constname:ident() => $singleton_name:ident;
         $vis:vis fn $funcname:ident();
     ) => {
-        #[doc = concat!("[`", stringify!($constname), "()`] with a runtime data provider argument.")]
+        #[doc = concat!("A version of [`", stringify!($constname), "()`] that uses custom data provided by a [`DataProvider`].")]
         ///
         /// Note that this will return an owned version of the data. Functionality is available on
-        /// the borrowed version, accessible through `.as_borrowed()`.
+        /// the borrowed version, accessible through [`CodePointSetData::as_borrowed`].
         $vis fn $funcname(
             provider: &(impl DataProvider<$keyed_data_marker> + ?Sized)
         ) -> Result<CodePointSetData, PropertiesError> {
@@ -333,9 +351,7 @@ macro_rules! make_code_point_set_property {
         }
 
         $(#[$doc])*
-        ///
-        /// ✨ **Enabled with the `"data"` feature.**
-        #[cfg(feature = "data")]
+        #[cfg(feature = "compiled_data")]
         $cvis const fn $constname() -> CodePointSetDataBorrowed<'static> {
             CodePointSetDataBorrowed {
                 set: crate::provider::Baked::$singleton_name,
@@ -350,6 +366,10 @@ make_code_point_set_property! {
     keyed_data_marker: AsciiHexDigitV1Marker;
     func:
     /// ASCII characters commonly used for the representation of hexadecimal numbers
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -386,6 +406,10 @@ make_code_point_set_property! {
     func:
     /// Alphabetic characters
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -411,6 +435,10 @@ make_code_point_set_property! {
     /// Format control characters which have specific functions in the Unicode Bidirectional
     /// Algorithm
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -432,6 +460,10 @@ make_code_point_set_property! {
     keyed_data_marker: BidiMirroredV1Marker;
     func:
     /// Characters that are mirrored in bidirectional text
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -468,6 +500,10 @@ make_code_point_set_property! {
     func:
     /// Uppercase, lowercase, and titlecase characters
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -489,6 +525,10 @@ make_code_point_set_property! {
     keyed_data_marker: CaseIgnorableV1Marker;
     func:
     /// Characters which are ignored for casing purposes
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -524,6 +564,10 @@ make_code_point_set_property! {
     func:
     /// Characters whose normalized forms are not stable under case folding
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -557,6 +601,10 @@ make_code_point_set_property! {
     func:
     /// Characters which are not identical to their NFKC_Casefold mapping
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -578,6 +626,10 @@ make_code_point_set_property! {
     keyed_data_marker: ChangesWhenLowercasedV1Marker;
     func:
     /// Characters whose normalized forms are not stable under a toLowercase mapping
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -601,6 +653,10 @@ make_code_point_set_property! {
     func:
     /// Characters whose normalized forms are not stable under a toTitlecase mapping
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -622,6 +678,10 @@ make_code_point_set_property! {
     keyed_data_marker: ChangesWhenUppercasedV1Marker;
     func:
     /// Characters whose normalized forms are not stable under a toUppercase mapping
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -646,6 +706,10 @@ make_code_point_set_property! {
     /// Punctuation characters explicitly called out as dashes in the Unicode Standard, plus
     /// their compatibility equivalents
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -669,6 +733,10 @@ make_code_point_set_property! {
     func:
     /// Deprecated characters. No characters will ever be removed from the standard, but the
     /// usage of deprecated characters is strongly discouraged.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -695,6 +763,10 @@ make_code_point_set_property! {
     /// ranges, permitting programs to correctly handle the default rendering of such
     /// characters when not otherwise supported.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -716,6 +788,10 @@ make_code_point_set_property! {
     keyed_data_marker: DiacriticV1Marker;
     func:
     /// Characters that linguistically modify the meaning of another character to which they apply
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -739,6 +815,10 @@ make_code_point_set_property! {
     func:
     /// Characters that can serve as a base for emoji modifiers
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -761,6 +841,10 @@ make_code_point_set_property! {
     func:
     /// Characters used in emoji sequences that normally do not appear on emoji keyboards as
     /// separate choices, such as base characters for emoji keycaps
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -786,6 +870,10 @@ make_code_point_set_property! {
     func:
     /// Characters that are emoji modifiers
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -808,6 +896,10 @@ make_code_point_set_property! {
     func:
     /// Characters that are emoji
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -829,6 +921,10 @@ make_code_point_set_property! {
     keyed_data_marker: EmojiPresentationV1Marker;
     func:
     /// Characters that have emoji presentation by default
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -853,6 +949,10 @@ make_code_point_set_property! {
     /// Characters whose principal function is to extend the value of a preceding alphabetic
     /// character or to extend the shape of adjacent characters.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -876,6 +976,10 @@ make_code_point_set_property! {
     func:
     /// Pictographic symbols, as well as reserved ranges in blocks largely associated with
     /// emoji characters
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -912,6 +1016,10 @@ make_code_point_set_property! {
     /// Property used together with the definition of Standard Korean Syllable Block to define
     /// "Grapheme base". See D58 in Chapter 3, Conformance in the Unicode Standard.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -935,6 +1043,10 @@ make_code_point_set_property! {
     func:
     /// Property used to define "Grapheme extender". See D59 in Chapter 3, Conformance in the
     /// Unicode Standard.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -971,6 +1083,10 @@ make_code_point_set_property! {
     func:
     /// Characters commonly used for the representation of hexadecimal numbers, plus their
     /// compatibility equivalents
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1013,6 +1129,10 @@ make_code_point_set_property! {
     /// [`Unicode Standard Annex #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for
     /// more details.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1040,6 +1160,10 @@ make_code_point_set_property! {
     /// Characters considered to be CJKV (Chinese, Japanese, Korean, and Vietnamese)
     /// ideographs, or related siniform ideographs
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1063,6 +1187,10 @@ make_code_point_set_property! {
     /// Characters that can begin an identifier. If using NFKC to fold differences between
     /// characters, use [`load_xid_start`] instead.  See [`Unicode Standard Annex
     /// #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for more details.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1090,6 +1218,10 @@ make_code_point_set_property! {
     func:
     /// Characters used in Ideographic Description Sequences
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1111,6 +1243,10 @@ make_code_point_set_property! {
     keyed_data_marker: IdsTrinaryOperatorV1Marker;
     func:
     /// Characters used in Ideographic Description Sequences
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1138,6 +1274,10 @@ make_code_point_set_property! {
     /// Format control characters which have specific functions for control of cursive joining
     /// and ligation
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1161,6 +1301,10 @@ make_code_point_set_property! {
     func:
     /// A small number of spacing vowel letters occurring in certain Southeast Asian scripts such as Thai and Lao
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1183,6 +1327,10 @@ make_code_point_set_property! {
     func:
     /// Lowercase characters
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1204,6 +1352,10 @@ make_code_point_set_property! {
     keyed_data_marker: MathV1Marker;
     func:
     /// Characters used in mathematical notation
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1230,6 +1382,10 @@ make_code_point_set_property! {
     keyed_data_marker: NoncharacterCodePointV1Marker;
     func:
     /// Code points permanently reserved for internal use
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1300,6 +1456,10 @@ make_code_point_set_property! {
     /// Standard Annex #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for more
     /// details.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1324,6 +1484,10 @@ make_code_point_set_property! {
     /// Characters used as whitespace in patterns (such as regular expressions).  See
     /// [`Unicode Standard Annex #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for
     /// more details.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1373,6 +1537,10 @@ make_code_point_set_property! {
     func:
     /// Punctuation characters that function as quotation marks.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1396,6 +1564,10 @@ make_code_point_set_property! {
     func:
     /// Characters used in the definition of Ideographic Description Sequences
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1417,6 +1589,10 @@ make_code_point_set_property! {
     keyed_data_marker: RegionalIndicatorV1Marker;
     func:
     /// Regional indicator characters, U+1F1E6..U+1F1FF
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1441,6 +1617,10 @@ make_code_point_set_property! {
     func:
     /// Characters with a "soft dot", like i or j. An accent placed on these characters causes
     /// the dot to disappear.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1488,6 +1668,10 @@ make_code_point_set_property! {
     func:
     /// Punctuation characters that generally mark the end of sentences
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1512,6 +1696,10 @@ make_code_point_set_property! {
     keyed_data_marker: TerminalPunctuationV1Marker;
     func:
     /// Punctuation characters that generally mark the end of textual units
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1538,6 +1726,10 @@ make_code_point_set_property! {
     func:
     /// A property which specifies the exact set of Unified CJK Ideographs in the standard
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1561,6 +1753,10 @@ make_code_point_set_property! {
     func:
     /// Uppercase characters
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1582,6 +1778,10 @@ make_code_point_set_property! {
     keyed_data_marker: VariationSelectorV1Marker;
     func:
     /// Characters that are Variation Selectors.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1608,6 +1808,10 @@ make_code_point_set_property! {
     func:
     /// Spaces, separator characters and other control characters which should be treated by
     /// programming languages as "white space" for the purpose of parsing elements
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1646,6 +1850,10 @@ make_code_point_set_property! {
     /// Characters that can come after the first character in an identifier.  See [`Unicode Standard Annex
     /// #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for more details.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Example
     ///
     /// ```
@@ -1673,6 +1881,10 @@ make_code_point_set_property! {
     /// Characters that can begin an identifier. See [`Unicode
     /// Standard Annex #31`](https://www.unicode.org/reports/tr31/tr31-35.html) for more
     /// details.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1710,16 +1922,14 @@ macro_rules! make_unicode_set_property {
         $cvis:vis const fn $constname:ident() => $singleton:ident;
         $vis:vis fn $funcname:ident();
     ) => {
-        #[doc = concat!("[`", stringify!($constname), "()`] with a runtime data provider argument.")]
+        #[doc = concat!("A version of [`", stringify!($constname), "()`] that uses custom data provided by a [`DataProvider`].")]
         $vis fn $funcname(
             provider: &(impl DataProvider<$keyed_data_marker> + ?Sized)
         ) -> Result<UnicodeSetData, PropertiesError> {
             Ok(provider.load(Default::default()).and_then(DataResponse::take_payload).map(UnicodeSetData::from_data)?)
         }
         $(#[$doc])*
-        ///
-        /// ✨ **Enabled with the `"data"` feature.**
-        #[cfg(feature = "data")]
+        #[cfg(feature = "compiled_data")]
         $cvis const fn $constname() -> UnicodeSetDataBorrowed<'static> {
             UnicodeSetDataBorrowed {
                 set: crate::provider::Baked::$singleton
@@ -1736,6 +1946,10 @@ make_unicode_set_property! {
     /// Characters and character sequences intended for general-purpose, independent, direct input.
     /// See [`Unicode Technical Standard #51`](https://unicode.org/reports/tr51/) for more
     /// details.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Example
     ///
@@ -1759,7 +1973,9 @@ make_unicode_set_property! {
 // Enumerated property getter fns
 //
 
-/// Return a [`CodePointSetData`] for a value or a grouping of values of the General_Category property. See [`GeneralCategoryGroup`].
+/// A version of [`for_general_category_group()`] that uses custom data provided by a [`DataProvider`].
+///
+/// [📚 Help choosing a constructor](icu_provider::constructors)
 pub fn load_for_general_category_group(
     provider: &(impl DataProvider<GeneralCategoryV1Marker> + ?Sized),
     enum_val: GeneralCategoryGroup,
@@ -1775,7 +1991,11 @@ pub fn load_for_general_category_group(
 }
 
 /// Return a [`CodePointSetData`] for a value or a grouping of values of the General_Category property. See [`GeneralCategoryGroup`].
-#[cfg(feature = "data")]
+///
+/// ✨ *Enabled with the `compiled_data` Cargo feature.*
+///
+/// [📚 Help choosing a constructor](icu_provider::constructors)
+#[cfg(feature = "compiled_data")]
 pub fn for_general_category_group(enum_val: GeneralCategoryGroup) -> CodePointSetData {
     let matching_gc_ranges = maps::general_category()
         .iter_ranges()
@@ -1804,7 +2024,11 @@ pub fn for_general_category_group(enum_val: GeneralCategoryGroup) -> CodePointSe
 /// - `General_Category` property values can themselves be treated like properties using a shorthand in ECMA262,
 ///    simply create the corresponding `GeneralCategory` set.
 ///
-/// ```rust
+/// ✨ *Enabled with the `compiled_data` Cargo feature.*
+///
+/// [📚 Help choosing a constructor](icu_provider::constructors)
+///
+/// ```
 /// use icu::properties::sets;
 ///
 /// let emoji = sets::load_for_ecma262("Emoji")
@@ -1815,8 +2039,8 @@ pub fn for_general_category_group(enum_val: GeneralCategoryGroup) -> CodePointSe
 /// ```
 ///
 /// [ecma]: https://tc39.es/ecma262/#table-binary-unicode-properties
-#[cfg(feature = "data")]
-pub fn load_for_ecma262(name: &str) -> Result<CodePointSetDataBorrowed, PropertiesError> {
+#[cfg(feature = "compiled_data")]
+pub fn load_for_ecma262(name: &str) -> Result<CodePointSetDataBorrowed<'static>, PropertiesError> {
     use crate::runtime::UnicodeProperty;
 
     let prop = if let Some(prop) = UnicodeProperty::parse_ecma262_name(name) {

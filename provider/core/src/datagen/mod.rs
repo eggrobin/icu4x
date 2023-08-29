@@ -21,21 +21,12 @@ pub use payload::{ExportBox, ExportMarker};
 
 use crate::prelude::*;
 
-/// The type of fallback that the data was generated for. Data size can be reduced as
-/// long as the data consumers know how this was done.
+/// The type of built-in fallback that the data was generated for, if applicable.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum FallbackMode {
-    /// No fallback
-    None,
-    /// Full fallback
-    Full,
-}
-
-impl Default for FallbackMode {
-    fn default() -> Self {
-        Self::None
-    }
+pub enum BuiltInFallbackMode {
+    /// Data uses full UTS 35 fallbacking.
+    Standard,
 }
 
 /// An object capable of exporting data payloads in some form.
@@ -57,22 +48,27 @@ pub trait DataExporter: Sync {
         payload: &DataPayload<ExportMarker>,
     ) -> Result<(), DataError> {
         self.put_payload(key, &Default::default(), payload)?;
-        self.flush_with_fallback(key, FallbackMode::None)
-    }
-
-    /// Function called after a non-singleton key has been fully dumped.
-    /// Takes non-mut self as it can be called concurrently.
-    fn flush_with_fallback(
-        &self,
-        key: DataKey,
-        _fallback_mode: FallbackMode,
-    ) -> Result<(), DataError> {
-        #[allow(deprecated)]
         self.flush(key)
     }
 
-    /// Use `self.flush_with_fallback(key, FallbackMode::None)`
-    #[deprecated(since = "1.3.0", note = "Use `self.flush_with_fallback`")]
+    /// Function called after a non-singleton key has been fully enumerated,
+    /// flushing that key with built-in fallback.
+    ///
+    /// Takes non-mut self as it can be called concurrently.
+    fn flush_with_built_in_fallback(
+        &self,
+        _key: DataKey,
+        _fallback_mode: BuiltInFallbackMode,
+    ) -> Result<(), DataError> {
+        Err(DataError::custom(
+            "Exporter does not implement built-in fallback",
+        ))
+    }
+
+    /// Function called after a non-singleton key has been fully enumerated.
+    /// Does not include built-in fallback.
+    ///
+    /// Takes non-mut self as it can be called concurrently.
     fn flush(&self, _key: DataKey) -> Result<(), DataError> {
         Ok(())
     }
@@ -83,13 +79,26 @@ pub trait DataExporter: Sync {
     fn close(&mut self) -> Result<(), DataError> {
         Ok(())
     }
+
+    /// Returns whether the provider supports built-in fallback. If `true`, the provider must
+    /// implement [`Self::flush_with_built_in_fallback()`].
+    fn supports_built_in_fallback(&self) -> bool {
+        false
+    }
 }
 
 /// A [`DynamicDataProvider`] that can be used for exporting data.
 ///
 /// Use [`make_exportable_provider`](crate::make_exportable_provider) to implement this.
-pub trait ExportableProvider: IterableDynamicDataProvider<ExportMarker> + Sync {}
-impl<T> ExportableProvider for T where T: IterableDynamicDataProvider<ExportMarker> + Sync {}
+pub trait ExportableProvider:
+    IterableDynamicDataProvider<ExportMarker> + DynamicDataProvider<AnyMarker> + Sync
+{
+}
+
+impl<T> ExportableProvider for T where
+    T: IterableDynamicDataProvider<ExportMarker> + DynamicDataProvider<AnyMarker> + Sync
+{
+}
 
 /// This macro can be used on a data provider to allow it to be used for data generation.
 ///
@@ -105,28 +114,24 @@ impl<T> ExportableProvider for T where T: IterableDynamicDataProvider<ExportMark
 /// [`BakedDataProvider`]: ../../icu_datagen/index.html
 #[macro_export]
 macro_rules! make_exportable_provider {
-    ($provider:ty, [ $($struct_m:ident),+, ]) => {
+    ($provider:ty, [ $($(#[$cfg:meta])? $struct_m:ty),+, ]) => {
         $crate::impl_dynamic_data_provider!(
             $provider,
-            [ $($struct_m),+, ],
+            [ $($(#[$cfg])? $struct_m),+, ],
             $crate::datagen::ExportMarker
         );
         $crate::impl_dynamic_data_provider!(
             $provider,
-            [ $($struct_m),+, ],
+            [ $($(#[$cfg])? $struct_m),+, ],
             $crate::any::AnyMarker
         );
 
         impl $crate::datagen::IterableDynamicDataProvider<$crate::datagen::ExportMarker> for $provider {
             fn supported_locales_for_key(&self, key: $crate::DataKey) -> Result<Vec<$crate::DataLocale>, $crate::DataError> {
-                #![allow(non_upper_case_globals)]
-                // Reusing the struct names as identifiers
-                $(
-                    const $struct_m: $crate::DataKeyHash = <$struct_m as $crate::KeyedDataMarker>::KEY.hashed();
-                )+
                 match key.hashed() {
                     $(
-                        $struct_m => {
+                        $(#[$cfg])?
+                        h if h == <$struct_m as $crate::KeyedDataMarker>::KEY.hashed() => {
                             $crate::datagen::IterableDataProvider::<$struct_m>::supported_locales(self)
                         }
                     )+,
@@ -178,14 +183,18 @@ impl DataExporter for MultiExporter {
             .try_for_each(|e| e.flush_singleton(key, payload))
     }
 
-    fn flush_with_fallback(
+    fn flush(&self, key: DataKey) -> Result<(), DataError> {
+        self.0.iter().try_for_each(|e| e.flush(key))
+    }
+
+    fn flush_with_built_in_fallback(
         &self,
         key: DataKey,
-        fallback_mode: FallbackMode,
+        fallback_mode: BuiltInFallbackMode,
     ) -> Result<(), DataError> {
         self.0
             .iter()
-            .try_for_each(|e| e.flush_with_fallback(key, fallback_mode))
+            .try_for_each(|e| e.flush_with_built_in_fallback(key, fallback_mode))
     }
 
     fn close(&mut self) -> Result<(), DataError> {

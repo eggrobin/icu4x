@@ -20,7 +20,6 @@ impl DataProvider<LanguageDisplayNamesV1Marker> for crate::DatagenProvider {
         let langid = req.locale.get_langid();
 
         let data: &cldr_serde::displaynames::language::Resource = self
-            .source
             .cldr()?
             .displaynames()
             .read_and_parse(&langid, "languages.json")?;
@@ -44,7 +43,6 @@ impl DataProvider<LocaleDisplayNamesV1Marker> for crate::DatagenProvider {
         let langid = req.locale.get_langid();
 
         let data: &cldr_serde::displaynames::language::Resource = self
-            .source
             .cldr()?
             .displaynames()
             .read_and_parse(&langid, "languages.json")?;
@@ -62,45 +60,39 @@ impl DataProvider<LocaleDisplayNamesV1Marker> for crate::DatagenProvider {
 
 impl IterableDataProvider<LanguageDisplayNamesV1Marker> for crate::DatagenProvider {
     fn supported_locales(&self) -> Result<Vec<DataLocale>, DataError> {
-        Ok(self.filter_data_locales(
-            self.source
-                .cldr()?
-                .displaynames()
-                .list_langs()?
-                .filter(|langid| {
-                    // The directory might exist without languages.json
-                    self.source
-                        .cldr()
-                        .unwrap()
-                        .displaynames()
-                        .file_exists(langid, "languages.json")
-                        .unwrap_or_default()
-                })
-                .map(DataLocale::from)
-                .collect(),
-        ))
+        Ok(self
+            .cldr()?
+            .displaynames()
+            .list_langs()?
+            .filter(|langid| {
+                // The directory might exist without languages.json
+                self.cldr()
+                    .unwrap()
+                    .displaynames()
+                    .file_exists(langid, "languages.json")
+                    .unwrap_or_default()
+            })
+            .map(DataLocale::from)
+            .collect())
     }
 }
 
 impl IterableDataProvider<LocaleDisplayNamesV1Marker> for crate::DatagenProvider {
     fn supported_locales(&self) -> Result<Vec<DataLocale>, DataError> {
-        Ok(self.filter_data_locales(
-            self.source
-                .cldr()?
-                .displaynames()
-                .list_langs()?
-                .filter(|langid| {
-                    // The directory might exist without languages.json
-                    self.source
-                        .cldr()
-                        .unwrap()
-                        .displaynames()
-                        .file_exists(langid, "languages.json")
-                        .unwrap_or_default()
-                })
-                .map(DataLocale::from)
-                .collect(),
-        ))
+        Ok(self
+            .cldr()?
+            .displaynames()
+            .list_langs()?
+            .filter(|langid| {
+                // The directory might exist without languages.json
+                self.cldr()
+                    .unwrap()
+                    .displaynames()
+                    .file_exists(langid, "languages.json")
+                    .unwrap_or_default()
+            })
+            .map(DataLocale::from)
+            .collect())
     }
 }
 
@@ -119,23 +111,21 @@ impl From<&cldr_serde::displaynames::language::Resource> for LanguageDisplayName
         let mut short_names = BTreeMap::new();
         let mut long_names = BTreeMap::new();
         let mut menu_names = BTreeMap::new();
-        for lang_data_entry in other.main.0.iter() {
-            for entry in lang_data_entry.1.localedisplaynames.languages.iter() {
-                if let Some(lang) = entry.0.strip_suffix(ALT_SHORT_SUBSTRING) {
-                    if let Ok(lang) = lang.parse::<Language>() {
-                        short_names.insert(lang.into_tinystr(), entry.1.as_ref());
-                    }
-                } else if let Some(lang) = entry.0.strip_suffix(ALT_LONG_SUBSTRING) {
-                    if let Ok(lang) = lang.parse::<Language>() {
-                        long_names.insert(lang.into_tinystr(), entry.1.as_ref());
-                    }
-                } else if let Some(lang) = entry.0.strip_suffix(ALT_MENU_SUBSTRING) {
-                    if let Ok(lang) = lang.parse::<Language>() {
-                        menu_names.insert(lang.into_tinystr(), entry.1.as_ref());
-                    }
-                } else if let Ok(lang) = entry.0.parse::<Language>() {
-                    names.insert(lang.into_tinystr(), entry.1.as_ref());
+        for entry in other.main.value.localedisplaynames.languages.iter() {
+            if let Some(lang) = entry.0.strip_suffix(ALT_SHORT_SUBSTRING) {
+                if let Ok(lang) = lang.parse::<Language>() {
+                    short_names.insert(lang.into_tinystr(), entry.1.as_ref());
                 }
+            } else if let Some(lang) = entry.0.strip_suffix(ALT_LONG_SUBSTRING) {
+                if let Ok(lang) = lang.parse::<Language>() {
+                    long_names.insert(lang.into_tinystr(), entry.1.as_ref());
+                }
+            } else if let Some(lang) = entry.0.strip_suffix(ALT_MENU_SUBSTRING) {
+                if let Ok(lang) = lang.parse::<Language>() {
+                    menu_names.insert(lang.into_tinystr(), entry.1.as_ref());
+                }
+            } else if let Ok(lang) = entry.0.parse::<Language>() {
+                names.insert(lang.into_tinystr(), entry.1.as_ref());
             }
         }
         Self {
@@ -170,25 +160,23 @@ impl From<&cldr_serde::displaynames::language::Resource> for LocaleDisplayNamesV
         let mut short_names = BTreeMap::new();
         let mut long_names = BTreeMap::new();
         let mut menu_names = BTreeMap::new();
-        for lang_data_entry in other.main.0.iter() {
-            for entry in lang_data_entry.1.localedisplaynames.languages.iter() {
-                #[allow(clippy::collapsible_if)] // consistency
-                if let Some(locale) = entry.0.strip_suffix(ALT_SHORT_SUBSTRING) {
-                    if locale.contains('-') {
-                        short_names.insert(locale, entry.1.as_ref());
-                    }
-                } else if let Some(locale) = entry.0.strip_suffix(ALT_LONG_SUBSTRING) {
-                    if locale.contains('-') {
-                        long_names.insert(locale, entry.1.as_ref());
-                    }
-                } else if let Some(locale) = entry.0.strip_suffix(ALT_MENU_SUBSTRING) {
-                    if locale.contains('-') {
-                        menu_names.insert(locale, entry.1.as_ref());
-                    }
-                } else if !entry.0.contains(ALT_SUBSTRING) {
-                    if entry.0.contains('-') {
-                        names.insert(entry.0, entry.1.as_ref());
-                    }
+        for entry in other.main.value.localedisplaynames.languages.iter() {
+            #[allow(clippy::collapsible_if)] // consistency
+            if let Some(locale) = entry.0.strip_suffix(ALT_SHORT_SUBSTRING) {
+                if locale.contains('-') {
+                    short_names.insert(locale, entry.1.as_ref());
+                }
+            } else if let Some(locale) = entry.0.strip_suffix(ALT_LONG_SUBSTRING) {
+                if locale.contains('-') {
+                    long_names.insert(locale, entry.1.as_ref());
+                }
+            } else if let Some(locale) = entry.0.strip_suffix(ALT_MENU_SUBSTRING) {
+                if locale.contains('-') {
+                    menu_names.insert(locale, entry.1.as_ref());
+                }
+            } else if !entry.0.contains(ALT_SUBSTRING) {
+                if entry.0.contains('-') {
+                    names.insert(entry.0, entry.1.as_ref());
                 }
             }
         }
@@ -224,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_basic_lang_display_names() {
-        let provider = crate::DatagenProvider::for_test();
+        let provider = crate::DatagenProvider::latest_tested_offline_subset();
 
         let data: DataPayload<LanguageDisplayNamesV1Marker> = provider
             .load(DataRequest {
@@ -246,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_basic_lang_short_display_names() {
-        let provider = crate::DatagenProvider::for_test();
+        let provider = crate::DatagenProvider::latest_tested_offline_subset();
 
         let data: DataPayload<LanguageDisplayNamesV1Marker> = provider
             .load(DataRequest {
@@ -268,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_basic_lang_long_display_names() {
-        let provider = crate::DatagenProvider::for_test();
+        let provider = crate::DatagenProvider::latest_tested_offline_subset();
 
         let data: DataPayload<LanguageDisplayNamesV1Marker> = provider
             .load(DataRequest {
@@ -290,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_basic_lang_menu_display_names() {
-        let provider = crate::DatagenProvider::for_test();
+        let provider = crate::DatagenProvider::latest_tested_offline_subset();
 
         let data: DataPayload<LanguageDisplayNamesV1Marker> = provider
             .load(DataRequest {
@@ -312,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_basic_locale_display_names() {
-        let provider = crate::DatagenProvider::for_test();
+        let provider = crate::DatagenProvider::latest_tested_offline_subset();
 
         let data: DataPayload<LocaleDisplayNamesV1Marker> = provider
             .load(DataRequest {

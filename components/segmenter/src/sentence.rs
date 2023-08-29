@@ -102,7 +102,7 @@ pub struct SentenceSegmenter {
     payload: DataPayload<SentenceBreakDataV1Marker>,
 }
 
-#[cfg(feature = "data")]
+#[cfg(feature = "compiled_data")]
 impl Default for SentenceSegmenter {
     fn default() -> Self {
         Self::new()
@@ -110,12 +110,12 @@ impl Default for SentenceSegmenter {
 }
 
 impl SentenceSegmenter {
-    /// Constructs a [`SentenceSegmenter`] with an invariant locale.
+    /// Constructs a [`SentenceSegmenter`] with an invariant locale and compiled data.
     ///
-    /// ✨ **Enabled with the `"data"` feature.**
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
     ///
     /// [📚 Help choosing a constructor](icu_provider::constructors)
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     pub fn new() -> Self {
         Self {
             payload: DataPayload::from_static_ref(
@@ -135,7 +135,7 @@ impl SentenceSegmenter {
         ]
     );
 
-    #[doc = icu_provider::gen_any_buffer_unstable_docs!(UNSTABLE, Self::try_new)]
+    #[doc = icu_provider::gen_any_buffer_unstable_docs!(UNSTABLE, Self::new)]
     pub fn try_new_unstable<D>(provider: &D) -> Result<Self, SegmenterError>
     where
         D: DataProvider<SentenceBreakDataV1Marker> + ?Sized,

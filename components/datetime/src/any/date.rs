@@ -68,6 +68,10 @@ impl DateFormatter {
     /// This method will pick the calendar off of the locale; and if unspecified or unknown will fall back to the default
     /// calendar for the locale. See [`AnyCalendarKind`] for a list of supported calendars.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Examples
     ///
     /// ```
@@ -96,12 +100,8 @@ impl DateFormatter {
     ///     "Sep 1, 2020"
     /// );
     /// ```
-    ///
-    /// ✨ **Enabled with the `"data"` feature.**
-    ///
-    /// [📚 Help choosing a constructor](icu_provider::constructors)
     #[inline(never)]
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     pub fn try_new_with_length(
         locale: &DataLocale,
         length: length::Date,
@@ -142,33 +142,6 @@ impl DateFormatter {
     }
 
     #[doc = icu_provider::gen_any_buffer_unstable_docs!(BUFFER, Self::try_new_with_length)]
-    /// ```
-    /// use icu::calendar::{any_calendar::AnyCalendar, Date, Gregorian};
-    /// use icu::datetime::{options::length, DateFormatter};
-    /// use icu::locid::locale;
-    /// use icu_provider::any::DynamicDataProviderAnyMarkerWrap;
-    /// use std::str::FromStr;
-    /// use writeable::assert_writeable_eq;
-    ///
-    /// let length = length::Date::Medium;
-    /// let locale = locale!("en-u-ca-gregory");
-    ///
-    /// let df = DateFormatter::try_new_with_length_with_buffer_provider(
-    ///     &icu_testdata::buffer(),
-    ///     &locale.into(),
-    ///     length,
-    /// )
-    /// .expect("Failed to create TypedDateFormatter instance.");
-    ///
-    /// let datetime =
-    ///     Date::try_new_iso_date(2020, 9, 1).expect("Failed to construct Date.");
-    /// let any_datetime = datetime.to_any();
-    ///
-    /// assert_writeable_eq!(
-    ///     df.format(&any_datetime).expect("Calendars should match"),
-    ///     "Sep 1, 2020"
-    /// );
-    /// ```
     #[inline]
     #[cfg(feature = "serde")]
     pub fn try_new_with_length_with_buffer_provider(
@@ -191,22 +164,34 @@ impl DateFormatter {
         P: DataProvider<OrdinalV1Marker>
             + DataProvider<WeekDataV1Marker>
             + DataProvider<DecimalSymbolsV1Marker>
-            + DataProvider<GregorianDateLengthsV1Marker>
             + DataProvider<BuddhistDateLengthsV1Marker>
-            + DataProvider<JapaneseDateLengthsV1Marker>
-            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
-            + DataProvider<CopticDateLengthsV1Marker>
-            + DataProvider<IndianDateLengthsV1Marker>
-            + DataProvider<EthiopianDateLengthsV1Marker>
-            + DataProvider<GregorianDateSymbolsV1Marker>
             + DataProvider<BuddhistDateSymbolsV1Marker>
-            + DataProvider<JapaneseDateSymbolsV1Marker>
-            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
+            + DataProvider<ChineseDateLengthsV1Marker>
+            + DataProvider<ChineseDateSymbolsV1Marker>
+            + DataProvider<CopticDateLengthsV1Marker>
             + DataProvider<CopticDateSymbolsV1Marker>
-            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<DangiDateLengthsV1Marker>
+            + DataProvider<DangiDateSymbolsV1Marker>
+            + DataProvider<EthiopianDateLengthsV1Marker>
             + DataProvider<EthiopianDateSymbolsV1Marker>
+            + DataProvider<GregorianDateLengthsV1Marker>
+            + DataProvider<GregorianDateSymbolsV1Marker>
+            + DataProvider<HebrewDateLengthsV1Marker>
+            + DataProvider<HebrewDateSymbolsV1Marker>
+            + DataProvider<IndianDateLengthsV1Marker>
+            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<IslamicDateLengthsV1Marker>
+            + DataProvider<IslamicDateSymbolsV1Marker>
+            + DataProvider<JapaneseDateLengthsV1Marker>
+            + DataProvider<JapaneseDateSymbolsV1Marker>
             + DataProvider<JapaneseErasV1Marker>
+            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
+            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
             + DataProvider<JapaneseExtendedErasV1Marker>
+            + DataProvider<PersianDateLengthsV1Marker>
+            + DataProvider<PersianDateSymbolsV1Marker>
+            + DataProvider<RocDateLengthsV1Marker>
+            + DataProvider<RocDateSymbolsV1Marker>
             + ?Sized,
     {
         let calendar = AnyCalendar::try_new_for_locale_unstable(provider, locale)?;
@@ -280,4 +265,31 @@ impl DateFormatter {
             Ok(None)
         }
     }
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn serde_constructor() {
+    use icu::calendar::Date;
+    use icu::datetime::{options::length, DateFormatter};
+    use icu::locid::locale;
+    use writeable::assert_writeable_eq;
+
+    let provider = icu_provider_blob::BlobDataProvider::try_new_from_static_blob(include_bytes!(
+        "../../tests/data/blob.postcard"
+    ))
+    .unwrap();
+
+    let df = DateFormatter::try_new_with_length_with_buffer_provider(
+        &provider,
+        &locale!("en").into(),
+        length::Date::Medium,
+    )
+    .unwrap();
+
+    assert_writeable_eq!(
+        df.format(&Date::try_new_iso_date(2020, 9, 1).unwrap().to_any())
+            .unwrap(),
+        "Sep 1, 2020"
+    );
 }

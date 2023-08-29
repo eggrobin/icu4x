@@ -118,6 +118,10 @@ impl DateTimeFormatter {
     /// This method will pick the calendar off of the locale; and if unspecified or unknown will fall back to the default
     /// calendar for the locale. See [`AnyCalendarKind`] for a list of supported calendars.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Examples
     ///
     /// ```
@@ -149,10 +153,10 @@ impl DateTimeFormatter {
     ///     "Sep 1, 2020, 12:34 PM"
     /// );
     /// ```
-    /// ✨ **Enabled with the `"data"` feature.**
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
     ///
     /// [📚 Help choosing a constructor](icu_provider::constructors)
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     #[inline]
     pub fn try_new(
         locale: &DataLocale,
@@ -196,36 +200,6 @@ impl DateTimeFormatter {
     }
 
     #[doc = icu_provider::gen_any_buffer_unstable_docs!(BUFFER, Self::try_new)]
-    /// ```
-    /// use icu::calendar::DateTime;
-    /// use icu::datetime::{options::length, DateTimeFormatter};
-    /// use icu::locid::locale;
-    /// use icu_provider::any::DynamicDataProviderAnyMarkerWrap;
-    /// use std::str::FromStr;
-    /// use writeable::assert_writeable_eq;
-    ///
-    /// let mut options = length::Bag::from_date_time_style(
-    ///     length::Date::Medium,
-    ///     length::Time::Short,
-    /// );
-    /// let locale = locale!("en-u-ca-gregory");
-    ///
-    /// let dtf = DateTimeFormatter::try_new_with_buffer_provider(
-    ///     &icu_testdata::buffer(),
-    ///     &locale.into(),
-    ///     options.into(),
-    /// )
-    /// .expect("Failed to create TypedDateTimeFormatter instance.");
-    ///
-    /// let datetime = DateTime::try_new_iso_datetime(2020, 9, 1, 12, 34, 28)
-    ///     .expect("Failed to construct DateTime.");
-    /// let any_datetime = datetime.to_any();
-    ///
-    /// assert_writeable_eq!(
-    ///     dtf.format(&any_datetime).expect("Calendars should match"),
-    ///     "Sep 1, 2020, 12:34 PM"
-    /// );
-    /// ```
     #[inline]
     #[cfg(feature = "serde")]
     pub fn try_new_with_buffer_provider(
@@ -252,22 +226,34 @@ impl DateTimeFormatter {
             + DataProvider<OrdinalV1Marker>
             + DataProvider<WeekDataV1Marker>
             + DataProvider<DecimalSymbolsV1Marker>
-            + DataProvider<GregorianDateLengthsV1Marker>
             + DataProvider<BuddhistDateLengthsV1Marker>
-            + DataProvider<JapaneseDateLengthsV1Marker>
-            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
-            + DataProvider<CopticDateLengthsV1Marker>
-            + DataProvider<IndianDateLengthsV1Marker>
-            + DataProvider<EthiopianDateLengthsV1Marker>
-            + DataProvider<GregorianDateSymbolsV1Marker>
             + DataProvider<BuddhistDateSymbolsV1Marker>
-            + DataProvider<JapaneseDateSymbolsV1Marker>
-            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
+            + DataProvider<ChineseDateLengthsV1Marker>
+            + DataProvider<ChineseDateSymbolsV1Marker>
+            + DataProvider<CopticDateLengthsV1Marker>
             + DataProvider<CopticDateSymbolsV1Marker>
-            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<DangiDateLengthsV1Marker>
+            + DataProvider<DangiDateSymbolsV1Marker>
+            + DataProvider<EthiopianDateLengthsV1Marker>
             + DataProvider<EthiopianDateSymbolsV1Marker>
+            + DataProvider<GregorianDateLengthsV1Marker>
+            + DataProvider<GregorianDateSymbolsV1Marker>
+            + DataProvider<HebrewDateLengthsV1Marker>
+            + DataProvider<HebrewDateSymbolsV1Marker>
+            + DataProvider<IndianDateLengthsV1Marker>
+            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<IslamicDateLengthsV1Marker>
+            + DataProvider<IslamicDateSymbolsV1Marker>
+            + DataProvider<JapaneseDateLengthsV1Marker>
+            + DataProvider<JapaneseDateSymbolsV1Marker>
             + DataProvider<JapaneseErasV1Marker>
+            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
+            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
             + DataProvider<JapaneseExtendedErasV1Marker>
+            + DataProvider<PersianDateLengthsV1Marker>
+            + DataProvider<PersianDateSymbolsV1Marker>
+            + DataProvider<RocDateLengthsV1Marker>
+            + DataProvider<RocDateSymbolsV1Marker>
             + ?Sized,
     {
         let calendar = AnyCalendar::try_new_for_locale_unstable(provider, locale)?;
@@ -293,6 +279,10 @@ impl DateTimeFormatter {
     }
 
     /// Constructor that supports experimental options with compiled data.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// <div class="stab unstable">
     /// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
@@ -332,7 +322,7 @@ impl DateTimeFormatter {
     /// );
     /// ```
     #[cfg(feature = "experimental")]
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     #[inline(never)]
     pub fn try_new_experimental(
         locale: &DataLocale,
@@ -378,22 +368,34 @@ impl DateTimeFormatter {
             + DataProvider<OrdinalV1Marker>
             + DataProvider<WeekDataV1Marker>
             + DataProvider<DecimalSymbolsV1Marker>
-            + DataProvider<GregorianDateLengthsV1Marker>
             + DataProvider<BuddhistDateLengthsV1Marker>
-            + DataProvider<JapaneseDateLengthsV1Marker>
-            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
-            + DataProvider<CopticDateLengthsV1Marker>
-            + DataProvider<IndianDateLengthsV1Marker>
-            + DataProvider<EthiopianDateLengthsV1Marker>
-            + DataProvider<GregorianDateSymbolsV1Marker>
             + DataProvider<BuddhistDateSymbolsV1Marker>
-            + DataProvider<JapaneseDateSymbolsV1Marker>
-            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
+            + DataProvider<ChineseDateLengthsV1Marker>
+            + DataProvider<ChineseDateSymbolsV1Marker>
+            + DataProvider<CopticDateLengthsV1Marker>
             + DataProvider<CopticDateSymbolsV1Marker>
-            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<DangiDateLengthsV1Marker>
+            + DataProvider<DangiDateSymbolsV1Marker>
+            + DataProvider<EthiopianDateLengthsV1Marker>
             + DataProvider<EthiopianDateSymbolsV1Marker>
+            + DataProvider<GregorianDateLengthsV1Marker>
+            + DataProvider<GregorianDateSymbolsV1Marker>
+            + DataProvider<HebrewDateLengthsV1Marker>
+            + DataProvider<HebrewDateSymbolsV1Marker>
+            + DataProvider<IndianDateLengthsV1Marker>
+            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<IslamicDateLengthsV1Marker>
+            + DataProvider<IslamicDateSymbolsV1Marker>
+            + DataProvider<JapaneseDateLengthsV1Marker>
+            + DataProvider<JapaneseDateSymbolsV1Marker>
             + DataProvider<JapaneseErasV1Marker>
+            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
+            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
             + DataProvider<JapaneseExtendedErasV1Marker>
+            + DataProvider<PersianDateLengthsV1Marker>
+            + DataProvider<PersianDateSymbolsV1Marker>
+            + DataProvider<RocDateLengthsV1Marker>
+            + DataProvider<RocDateSymbolsV1Marker>
             + ?Sized,
     {
         let calendar = AnyCalendar::try_new_for_locale_unstable(provider, locale)?;
@@ -631,4 +633,35 @@ mod tests {
             "2022 M09 20 00:00:00"
         );
     }
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn buffer_constructor() {
+    use icu::calendar::DateTime;
+    use icu::datetime::{options::length, DateTimeFormatter};
+    use icu::locid::locale;
+    use writeable::assert_writeable_eq;
+
+    let provider = icu_provider_blob::BlobDataProvider::try_new_from_static_blob(include_bytes!(
+        "../../tests/data/blob.postcard"
+    ))
+    .unwrap();
+
+    let dtf = DateTimeFormatter::try_new_with_buffer_provider(
+        &provider,
+        &locale!("en").into(),
+        length::Bag::from_date_time_style(length::Date::Medium, length::Time::Short).into(),
+    )
+    .unwrap();
+
+    assert_writeable_eq!(
+        dtf.format(
+            &DateTime::try_new_iso_datetime(2020, 9, 1, 12, 34, 28)
+                .unwrap()
+                .to_any()
+        )
+        .expect("Calendars should match"),
+        "Sep 1, 2020, 12:34 PM"
+    );
 }

@@ -53,6 +53,11 @@ use tinystr::tinystr;
 ///
 /// This calendar supports two era codes: `"bd"`, and `"ad"`, corresponding to the Before Diocletian and After Diocletian/Anno Martyrum
 /// eras. 1 A.M. is equivalent to 284 C.E.
+///
+/// # Month codes
+///
+/// This calendar supports 13 solar month codes (`"M01" - "M13"`), with `"M13"` being used for the short epagomenal month
+/// at the end of the year.
 #[derive(Copy, Clone, Debug, Hash, Default, Eq, PartialEq, PartialOrd, Ord)]
 #[allow(clippy::exhaustive_structs)] // this type is stable
 pub struct Coptic;
@@ -92,7 +97,7 @@ impl CalendarArithmetic for Coptic {
         }
     }
 
-    fn days_in_provided_year(year: i32) -> u32 {
+    fn days_in_provided_year(year: i32) -> u16 {
         if Self::is_leap_year(year) {
             366
         } else {
@@ -124,7 +129,7 @@ impl Calendar for Coptic {
             return Err(CalendarError::UnknownEra(era.0, self.debug_name()));
         };
 
-        ArithmeticDate::new_from_solar_codes(self, year, month_code, day).map(CopticDateInner)
+        ArithmeticDate::new_from_codes(self, year, month_code, day).map(CopticDateInner)
     }
     fn date_from_iso(&self, iso: Date<Iso>) -> CopticDateInner {
         let fixed_iso = Iso::fixed_from_iso(*iso.inner());
@@ -140,7 +145,7 @@ impl Calendar for Coptic {
         date.0.months_in_year()
     }
 
-    fn days_in_year(&self, date: &Self::DateInner) -> u32 {
+    fn days_in_year(&self, date: &Self::DateInner) -> u16 {
         date.0.days_in_year()
     }
 
@@ -173,7 +178,7 @@ impl Calendar for Coptic {
     }
 
     fn month(&self, date: &Self::DateInner) -> types::FormattableMonth {
-        date.0.solar_month()
+        date.0.month()
     }
 
     fn day_of_month(&self, date: &Self::DateInner) -> types::DayOfMonth {
@@ -237,7 +242,7 @@ impl Coptic {
         *Date::try_new_coptic_date(year, month, day).unwrap().inner()
     }
 
-    fn days_in_year_direct(year: i32) -> u32 {
+    fn days_in_year_direct(year: i32) -> u16 {
         if Coptic::is_leap_year(year) {
             366
         } else {
@@ -266,7 +271,7 @@ impl Date<Coptic> {
         month: u8,
         day: u8,
     ) -> Result<Date<Coptic>, CalendarError> {
-        ArithmeticDate::new_from_solar_ordinals(year, month, day)
+        ArithmeticDate::new_from_ordinals(year, month, day)
             .map(CopticDateInner)
             .map(|inner| Date::from_raw(inner, Coptic))
     }

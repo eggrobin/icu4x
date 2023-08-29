@@ -28,7 +28,7 @@ exit_on_error true
 glob_pattern_array = array "./**/*.rs" "./**/*.yml" "./**/*.toml" "./**/*.rst" "./**/*.bat" "./**/*.c" "./**/*.cpp"
 
 # Skip the files matching these patterns.
-glob_skip_pattern_array = array "**/target/**/*" "ffi/diplomat/*/docs/**/*" "**/node_modules/**/*" "**/data/**/*" "ffi/gn/vendor/**/*" "ffi/gn/third_party_tools/**/*"
+glob_skip_pattern_array = array "**/target/**/*" "ffi/diplomat/*/docs/**/*" "**/node_modules/**/*" "**/data/**/*" "ffi/gn/vendor/**/*" "ffi/gn/third_party_tools/**/*" "ffi/diplomat/c/examples/fixeddecimal_tiny/baked_data/**/*"
 
 blank_line = set ""
 
@@ -107,13 +107,11 @@ script = '''
 exit_on_error true
 
 glob_pattern = set "./**/Cargo.toml"
-glob_skip_pattern = array "ffi/gn/vendor/**/*" "ffi/gn/third_party_tools/**/*" "ffi/diplomat/*/examples/**/*" "tools/**/*" "**/fuzz/*" "**/target/**/*" "provider/repodata/**/*" "docs/tutorials/crates/Cargo.toml"
-
-template = canonicalize README.tpl
+glob_skip_pattern = array "ffi/gn/**/*" "ffi/diplomat/*/examples/**/*" "tools/**/*" "**/fuzz/*" "**/target/**/*" "docs/**/*"
 
 cargo_list = exec cargo --list
-if not contains ${cargo_list.stdout} "readme"
-    trigger_error "Please run 'cargo install cargo-readme' to support generating README.md files"
+if not contains ${cargo_list.stdout} "rdme"
+    trigger_error "Please run 'cargo install cargo-rdme' to support generating README.md files"
 end
 
 skip_paths = set_new
@@ -124,6 +122,8 @@ for skip_pattern in ${glob_skip_pattern}
     end
 end
 
+project_dir = pwd
+
 handle = glob_array ${glob_pattern}
 for path in ${handle}
     root_dir = dirname ${path}
@@ -133,7 +133,9 @@ for path in ${handle}
     end
     if not ${skip_this}
         echo "Automatically generating ${root_dir}/README.md"
-        exec --fail-on-error cargo readme -r ${root_dir} -o README.md -t ${template}
+        cd ${root_dir}
+        exec --fail-on-error cargo rdme --force
+        cd ${project_dir}
     end
 end
 '''
@@ -175,7 +177,7 @@ exit_on_error true
 
 glob_pattern = set "./**/Cargo.toml"
 license = canonicalize LICENSE
-skip_path_prefixes = array "ffi/gn/vendor/" "ffi/gn/third_party_tools/" "ffi/diplomat/c/examples" "docs/tutorials/crates/"
+skip_path_prefixes = array "ffi/gn/vendor/" "ffi/gn/third_party_tools/" "ffi/diplomat/c/examples" "docs/"
 
 handle = glob_array ${glob_pattern}
 for path in ${handle}
@@ -203,7 +205,7 @@ exit_on_error true
 glob_pattern = set "./**/Cargo.toml"
 license = canonicalize LICENSE
 license_text = readfile ${license}
-skip_path_prefixes = array "ffi/gn/vendor/" "ffi/gn/third_party_tools/" "ffi/diplomat/c/examples" "docs/tutorials/crates/"
+skip_path_prefixes = array "ffi/gn/vendor/" "ffi/gn/third_party_tools/" "ffi/diplomat/c/examples" "docs/"
 
 handle = glob_array ${glob_pattern}
 for path in ${handle}

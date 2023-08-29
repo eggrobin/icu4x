@@ -21,14 +21,17 @@ use icu_provider::prelude::*;
 use tinystr::TinyStr16;
 use zerovec::ZeroVec;
 
-#[cfg(feature = "data")]
+#[cfg(feature = "compiled_data")]
 #[derive(Debug)]
 /// Baked data
 pub struct Baked;
 
-#[cfg(feature = "data")]
+#[cfg(feature = "compiled_data")]
 const _: () = {
-    use crate as icu_calendar;
+    pub mod icu {
+        pub use crate as calendar;
+        pub use icu_locid_transform as locid_transform;
+    }
     icu_calendar_data::impl_calendar_japanese_v1!(Baked);
     icu_calendar_data::impl_calendar_japanext_v1!(Baked);
     icu_calendar_data::impl_datetime_week_data_v1!(Baked);
@@ -119,7 +122,7 @@ impl FromStr for EraStartDate {
     "datetime/week_data@1",
     fallback_by = "region"
 ))]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(
     feature = "datagen",
     derive(serde::Serialize, databake::Bake),

@@ -127,6 +127,10 @@ impl ZonedDateTimeFormatter {
     /// This method will pick the calendar off of the locale; and if unspecified or unknown will fall back to the default
     /// calendar for the locale. See [`AnyCalendarKind`] for a list of supported calendars.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Examples
     ///
     /// ```
@@ -163,12 +167,8 @@ impl ZonedDateTimeFormatter {
     ///     "April 2021, 16:12 GMT-07:00"
     /// );
     /// ```
-    ///
-    /// ✨ **Enabled with the `"data"` feature.**
-    ///
-    /// [📚 Help choosing a constructor](icu_provider::constructors)
     #[cfg(feature = "experimental")]
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     pub fn try_new_experimental(
         locale: &DataLocale,
         date_time_format_options: DateTimeFormatterOptions,
@@ -225,22 +225,34 @@ impl ZonedDateTimeFormatter {
             + DataProvider<provider::time_zones::MetazoneSpecificNamesShortV1Marker>
             + DataProvider<OrdinalV1Marker>
             + DataProvider<DecimalSymbolsV1Marker>
-            + DataProvider<GregorianDateLengthsV1Marker>
             + DataProvider<BuddhistDateLengthsV1Marker>
-            + DataProvider<JapaneseDateLengthsV1Marker>
-            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
-            + DataProvider<CopticDateLengthsV1Marker>
-            + DataProvider<IndianDateLengthsV1Marker>
-            + DataProvider<EthiopianDateLengthsV1Marker>
-            + DataProvider<GregorianDateSymbolsV1Marker>
             + DataProvider<BuddhistDateSymbolsV1Marker>
-            + DataProvider<JapaneseDateSymbolsV1Marker>
-            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
+            + DataProvider<ChineseDateLengthsV1Marker>
+            + DataProvider<ChineseDateSymbolsV1Marker>
+            + DataProvider<CopticDateLengthsV1Marker>
             + DataProvider<CopticDateSymbolsV1Marker>
-            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<DangiDateLengthsV1Marker>
+            + DataProvider<DangiDateSymbolsV1Marker>
+            + DataProvider<EthiopianDateLengthsV1Marker>
             + DataProvider<EthiopianDateSymbolsV1Marker>
+            + DataProvider<GregorianDateLengthsV1Marker>
+            + DataProvider<GregorianDateSymbolsV1Marker>
+            + DataProvider<HebrewDateLengthsV1Marker>
+            + DataProvider<HebrewDateSymbolsV1Marker>
+            + DataProvider<IndianDateLengthsV1Marker>
+            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<IslamicDateLengthsV1Marker>
+            + DataProvider<IslamicDateSymbolsV1Marker>
+            + DataProvider<JapaneseDateLengthsV1Marker>
+            + DataProvider<JapaneseDateSymbolsV1Marker>
             + DataProvider<JapaneseErasV1Marker>
+            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
+            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
             + DataProvider<JapaneseExtendedErasV1Marker>
+            + DataProvider<PersianDateLengthsV1Marker>
+            + DataProvider<PersianDateSymbolsV1Marker>
+            + DataProvider<RocDateLengthsV1Marker>
+            + DataProvider<RocDateSymbolsV1Marker>
             + ?Sized,
     {
         let calendar = AnyCalendar::try_new_for_locale_unstable(provider, locale)?;
@@ -271,6 +283,10 @@ impl ZonedDateTimeFormatter {
     ///
     /// This method will pick the calendar off of the locale; and if unspecified or unknown will fall back to the default
     /// calendar for the locale. See [`AnyCalendarKind`] for a list of supported calendars.
+    ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
     ///
     /// # Examples
     ///
@@ -307,11 +323,7 @@ impl ZonedDateTimeFormatter {
     ///     "Apr 8, 2021, 4:12:37 PM GMT-07:00"
     /// );
     /// ```
-    ///
-    /// ✨ **Enabled with the `"data"` feature.**
-    ///
-    /// [📚 Help choosing a constructor](icu_provider::constructors)
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     pub fn try_new(
         locale: &DataLocale,
         date_time_format_options: DateTimeFormatterOptions,
@@ -365,22 +377,34 @@ impl ZonedDateTimeFormatter {
             + DataProvider<provider::time_zones::MetazoneSpecificNamesShortV1Marker>
             + DataProvider<OrdinalV1Marker>
             + DataProvider<DecimalSymbolsV1Marker>
-            + DataProvider<GregorianDateLengthsV1Marker>
             + DataProvider<BuddhistDateLengthsV1Marker>
-            + DataProvider<JapaneseDateLengthsV1Marker>
-            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
-            + DataProvider<CopticDateLengthsV1Marker>
-            + DataProvider<IndianDateLengthsV1Marker>
-            + DataProvider<EthiopianDateLengthsV1Marker>
-            + DataProvider<GregorianDateSymbolsV1Marker>
             + DataProvider<BuddhistDateSymbolsV1Marker>
-            + DataProvider<JapaneseDateSymbolsV1Marker>
-            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
+            + DataProvider<ChineseDateLengthsV1Marker>
+            + DataProvider<ChineseDateSymbolsV1Marker>
+            + DataProvider<CopticDateLengthsV1Marker>
             + DataProvider<CopticDateSymbolsV1Marker>
-            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<DangiDateLengthsV1Marker>
+            + DataProvider<DangiDateSymbolsV1Marker>
+            + DataProvider<EthiopianDateLengthsV1Marker>
             + DataProvider<EthiopianDateSymbolsV1Marker>
+            + DataProvider<GregorianDateLengthsV1Marker>
+            + DataProvider<GregorianDateSymbolsV1Marker>
+            + DataProvider<HebrewDateLengthsV1Marker>
+            + DataProvider<HebrewDateSymbolsV1Marker>
+            + DataProvider<IndianDateLengthsV1Marker>
+            + DataProvider<IndianDateSymbolsV1Marker>
+            + DataProvider<IslamicDateLengthsV1Marker>
+            + DataProvider<IslamicDateSymbolsV1Marker>
+            + DataProvider<JapaneseDateLengthsV1Marker>
+            + DataProvider<JapaneseDateSymbolsV1Marker>
             + DataProvider<JapaneseErasV1Marker>
+            + DataProvider<JapaneseExtendedDateLengthsV1Marker>
+            + DataProvider<JapaneseExtendedDateSymbolsV1Marker>
             + DataProvider<JapaneseExtendedErasV1Marker>
+            + DataProvider<PersianDateLengthsV1Marker>
+            + DataProvider<PersianDateSymbolsV1Marker>
+            + DataProvider<RocDateLengthsV1Marker>
+            + DataProvider<RocDateSymbolsV1Marker>
             + ?Sized,
     {
         let calendar = AnyCalendar::try_new_for_locale_unstable(provider, locale)?;
@@ -406,36 +430,6 @@ impl ZonedDateTimeFormatter {
     }
 
     #[doc = icu_provider::gen_any_buffer_unstable_docs!(ANY, Self::try_new)]
-    ///
-    /// ```
-    /// use icu::calendar::{DateTime, Gregorian};
-    /// use icu::datetime::options::length;
-    /// use icu::datetime::{DateTimeFormatterOptions, ZonedDateTimeFormatter};
-    /// use icu::locid::locale;
-    /// use icu::timezone::CustomTimeZone;
-    /// use std::str::FromStr;
-    /// use writeable::assert_writeable_eq;
-    ///
-    /// let options = length::Bag::from_date_time_style(length::Date::Medium, length::Time::Long).into();
-    /// let locale = locale!("en-u-ca-gregory");
-    ///
-    /// let zdtf = ZonedDateTimeFormatter::try_new_with_any_provider(
-    ///     &icu_testdata::any(),
-    ///     &locale.into(),
-    ///     options,
-    ///     Default::default(),
-    /// )
-    /// .expect("Construction should succeed");
-    ///
-    /// let datetime = DateTime::try_new_iso_datetime(2021, 04, 08, 16, 12, 37).unwrap();
-    /// let time_zone = CustomTimeZone::from_str("-07:00").unwrap();
-    /// let any_datetime = datetime.to_any();
-    ///
-    /// assert_writeable_eq!(
-    ///     zdtf.format(&any_datetime, &time_zone).unwrap(),
-    ///     "Apr 8, 2021, 4:12:37 PM GMT-07:00"
-    /// );
-    /// ```
     #[inline]
     pub fn try_new_with_any_provider(
         provider: &impl AnyProvider,
@@ -448,40 +442,6 @@ impl ZonedDateTimeFormatter {
     }
 
     #[doc = icu_provider::gen_any_buffer_unstable_docs!(BUFFER, Self::try_new)]
-    /// ```
-    /// use icu::calendar::{DateTime, Gregorian};
-    /// use icu::datetime::options::length;
-    /// use icu::datetime::{DateTimeFormatterOptions, ZonedDateTimeFormatter};
-    /// use icu::locid::locale;
-    /// use icu::timezone::CustomTimeZone;
-    /// use std::str::FromStr;
-    /// use writeable::assert_writeable_eq;
-    ///
-    /// let options = length::Bag::from_date_time_style(
-    ///     length::Date::Medium,
-    ///     length::Time::Long,
-    /// )
-    /// .into();
-    /// let locale = locale!("en");
-    ///
-    /// let zdtf = ZonedDateTimeFormatter::try_new_with_buffer_provider(
-    ///     &icu_testdata::buffer(),
-    ///     &locale.into(),
-    ///     options,
-    ///     Default::default(),
-    /// )
-    /// .expect("Construction should succeed");
-    ///
-    /// let datetime =
-    ///     DateTime::try_new_iso_datetime(2021, 04, 08, 16, 12, 37).unwrap();
-    /// let time_zone = CustomTimeZone::from_str("-07:00").unwrap();
-    /// let any_datetime = datetime.to_any();
-    ///
-    /// assert_writeable_eq!(
-    ///     zdtf.format(&any_datetime, &time_zone).unwrap(),
-    ///     "Apr 8, 2021, 4:12:37 PM GMT-07:00"
-    /// );
-    /// ```
     #[inline]
     #[cfg(feature = "serde")]
     pub fn try_new_with_buffer_provider(
@@ -560,4 +520,41 @@ impl ZonedDateTimeFormatter {
             Ok(None)
         }
     }
+}
+
+#[test]
+#[cfg(feature = "serde")]
+fn buffer_constructor() {
+    #![allow(clippy::zero_prefixed_literal)]
+    use icu::calendar::DateTime;
+    use icu::datetime::options::length;
+    use icu::datetime::ZonedDateTimeFormatter;
+    use icu::locid::locale;
+    use icu::timezone::CustomTimeZone;
+    use std::str::FromStr;
+    use writeable::assert_writeable_eq;
+
+    let provider = icu_provider_blob::BlobDataProvider::try_new_from_static_blob(include_bytes!(
+        "../../tests/data/blob.postcard"
+    ))
+    .unwrap();
+
+    let zdtf = ZonedDateTimeFormatter::try_new_with_buffer_provider(
+        &provider,
+        &locale!("en").into(),
+        length::Bag::from_date_time_style(length::Date::Medium, length::Time::Long).into(),
+        Default::default(),
+    )
+    .unwrap();
+
+    assert_writeable_eq!(
+        zdtf.format(
+            &DateTime::try_new_iso_datetime(2021, 04, 08, 16, 12, 37)
+                .unwrap()
+                .to_any(),
+            &CustomTimeZone::from_str("-07:00").unwrap()
+        )
+        .unwrap(),
+        "Apr 8, 2021, 4:12:37 PM GMT-07:00"
+    );
 }

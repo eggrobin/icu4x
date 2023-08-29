@@ -13,14 +13,17 @@ use alloc::borrow::Cow;
 use icu_provider::prelude::*;
 use zerovec::ZeroMap;
 
-#[cfg(feature = "data")]
+#[cfg(feature = "compiled_data")]
 #[derive(Debug)]
 /// Baked data
 pub struct Baked;
 
-#[cfg(feature = "data")]
+#[cfg(feature = "compiled_data")]
 const _: () = {
-    use crate as icu_relativetime;
+    pub mod icu {
+        pub use crate as relativetime;
+        pub use icu_locid_transform as locid_transform;
+    }
     icu_relativetime_data::impl_relativetime_long_day_v1!(Baked);
     icu_relativetime_data::impl_relativetime_long_hour_v1!(Baked);
     icu_relativetime_data::impl_relativetime_long_minute_v1!(Baked);

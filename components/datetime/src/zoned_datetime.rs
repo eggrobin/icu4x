@@ -81,6 +81,10 @@ impl<C: CldrCalendar> TypedZonedDateTimeFormatter<C> {
     /// Constructor that takes a selected locale and a list of [`DateTimeFormatterOptions`].
     /// It collects all data necessary to format zoned datetime values into the given locale.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// <div class="stab unstable">
     /// 🚧 This code is experimental; it may change at any time, in breaking or non-breaking ways,
     /// including in SemVer minor releases. It can be enabled with the "experimental" Cargo feature
@@ -122,7 +126,7 @@ impl<C: CldrCalendar> TypedZonedDateTimeFormatter<C> {
     ///
     /// [data provider]: icu_provider
     #[cfg(feature = "experimental")]
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     #[inline]
     pub fn try_new_experimental(
         locale: &DataLocale,
@@ -204,6 +208,10 @@ impl<C: CldrCalendar> TypedZonedDateTimeFormatter<C> {
     /// Constructor that takes a selected locale and a list of [`DateTimeFormatterOptions`].
     /// It collects all data necessary to format zoned datetime values into the given locale.
     ///
+    /// ✨ *Enabled with the `compiled_data` Cargo feature.*
+    ///
+    /// [📚 Help choosing a constructor](icu_provider::constructors)
+    ///
     /// # Examples
     ///
     /// ```
@@ -237,7 +245,7 @@ impl<C: CldrCalendar> TypedZonedDateTimeFormatter<C> {
     ///
     /// [data provider]: icu_provider
     #[inline]
-    #[cfg(feature = "data")]
+    #[cfg(feature = "compiled_data")]
     pub fn try_new(
         locale: &DataLocale,
         date_time_format_options: DateTimeFormatterOptions,

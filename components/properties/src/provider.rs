@@ -31,14 +31,18 @@ use zerofrom::ZeroFrom;
 
 use zerovec::{VarZeroVec, ZeroSlice, ZeroVecError};
 
-#[cfg(feature = "data")]
+#[cfg(feature = "compiled_data")]
 #[derive(Debug)]
 /// Baked data
 pub struct Baked;
 
-#[cfg(feature = "data")]
+#[cfg(feature = "compiled_data")]
 const _: () = {
-    use crate as icu_properties;
+    pub mod icu {
+        pub use crate as properties;
+        pub use icu_collections as collections;
+        pub use icu_locid_transform as locid_transform;
+    }
     icu_properties_data::impl_propnames_from_gcb_v1!(Baked);
     icu_properties_data::impl_propnames_from_bc_v1!(Baked);
     icu_properties_data::impl_propnames_from_ccc_v1!(Baked);
@@ -641,7 +645,7 @@ macro_rules! expand {
                     }
 
                     impl KeyedDataMarker for $value_short_name_marker_linear4 {
-                        const KEY: DataKey = data_key!(concat!("propnames/to/short/linear4/", $enum_s, "@1"));
+                        const KEY: DataKey = data_key!(concat!("propnames/to/short/linear4/", $enum_s, "@1"), DataKeyMetadata::construct_internal(FallbackPriority::Language, None, None, true));
                     }
 
                     #[doc = core::concat!("Data marker for producing long names of the values of the '", $enum_s, "' Unicode property")]

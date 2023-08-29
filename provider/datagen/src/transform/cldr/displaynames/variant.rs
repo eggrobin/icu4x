@@ -20,7 +20,6 @@ impl DataProvider<VariantDisplayNamesV1Marker> for crate::DatagenProvider {
         let langid = req.locale.get_langid();
 
         let data: &cldr_serde::displaynames::variant::Resource = self
-            .source
             .cldr()?
             .displaynames()
             .read_and_parse(&langid, "variants.json")?;
@@ -38,23 +37,20 @@ impl DataProvider<VariantDisplayNamesV1Marker> for crate::DatagenProvider {
 
 impl IterableDataProvider<VariantDisplayNamesV1Marker> for crate::DatagenProvider {
     fn supported_locales(&self) -> Result<Vec<DataLocale>, DataError> {
-        Ok(self.filter_data_locales(
-            self.source
-                .cldr()?
-                .displaynames()
-                .list_langs()?
-                .filter(|langid| {
-                    // The directory might exist without variants.json
-                    self.source
-                        .cldr()
-                        .unwrap()
-                        .displaynames()
-                        .file_exists(langid, "variants.json")
-                        .unwrap_or_default()
-                })
-                .map(DataLocale::from)
-                .collect(),
-        ))
+        Ok(self
+            .cldr()?
+            .displaynames()
+            .list_langs()?
+            .filter(|langid| {
+                // The directory might exist without variants.json
+                self.cldr()
+                    .unwrap()
+                    .displaynames()
+                    .file_exists(langid, "variants.json")
+                    .unwrap_or_default()
+            })
+            .map(DataLocale::from)
+            .collect())
     }
 }
 
@@ -66,12 +62,10 @@ impl TryFrom<&cldr_serde::displaynames::variant::Resource> for VariantDisplayNam
 
     fn try_from(other: &cldr_serde::displaynames::variant::Resource) -> Result<Self, Self::Error> {
         let mut names = BTreeMap::new();
-        for lang_data_entry in other.main.0.iter() {
-            for entry in lang_data_entry.1.localedisplaynames.variants.iter() {
-                // TODO: Support alt variants for variant display names.
-                if !entry.0.contains(ALT_SUBSTRING) {
-                    names.insert(Variant::from_str(entry.0)?.into_tinystr(), entry.1.as_str());
-                }
+        for entry in other.main.value.localedisplaynames.variants.iter() {
+            // TODO: Support alt variants for variant display names.
+            if !entry.0.contains(ALT_SUBSTRING) {
+                names.insert(Variant::from_str(entry.0)?.into_tinystr(), entry.1.as_str());
             }
         }
         Ok(Self {
@@ -92,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_basic_variant_display_names() {
-        let provider = crate::DatagenProvider::for_test();
+        let provider = crate::DatagenProvider::latest_tested_offline_subset();
 
         let data: DataPayload<VariantDisplayNamesV1Marker> = provider
             .load(DataRequest {

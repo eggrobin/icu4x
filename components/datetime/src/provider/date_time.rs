@@ -19,14 +19,14 @@ use crate::pattern::PatternItem;
 use crate::pattern::{hour_cycle, runtime::PatternPlurals};
 use crate::provider;
 use crate::provider::calendar::patterns::PatternPluralsV1;
+use crate::provider::calendar::{months, DateLengthsV1, TimeLengthsV1};
 use crate::provider::calendar::{
     patterns::GenericPatternV1Marker, patterns::PatternPluralsFromPatternsV1Marker,
     ErasedDateLengthsV1Marker, TimeLengthsV1Marker,
 };
-use crate::provider::calendar::{DateLengthsV1, TimeLengthsV1};
 #[cfg(feature = "experimental")]
 use crate::{options::components, provider::calendar::DateSkeletonPatternsV1Marker};
-use icu_calendar::types::{Era, MonthCode};
+use icu_calendar::types::Era;
 use icu_locid::extensions::unicode::Value;
 use icu_provider::prelude::*;
 
@@ -380,15 +380,23 @@ where
     #[cfg(feature = "experimental")]
     fn skeleton_data_payload(&self) -> Result<DataPayload<DateSkeletonPatternsV1Marker>> {
         use icu_locid::extensions::unicode::{key, value};
+        use tinystr::tinystr;
         let mut locale = self.locale.clone();
         #[allow(clippy::expect_used)] // experimental
         let cal_val = self.cal_val.expect("should be present for components bag");
         // Skeleton data for ethioaa is stored under ethiopic
         if cal_val == &value!("ethioaa") {
             locale.set_unicode_ext(key!("ca"), value!("ethiopic"));
+        } else if cal_val == &value!("islamic")
+            || cal_val == &value!("islamicc")
+            || cal_val.as_tinystr_slice().get(0) == Some(&tinystr!(8, "islamic"))
+        {
+            // All islamic calendars store skeleton data under islamic, not their individual extension keys
+            locale.set_unicode_ext(key!("ca"), value!("islamic"));
         } else {
             locale.set_unicode_ext(key!("ca"), cal_val.clone());
         };
+
         let data = self
             .data_provider
             .load(DataRequest {
@@ -396,17 +404,17 @@ where
                 metadata: Default::default(),
             })?
             .take_payload()?;
+
         Ok(data)
     }
 }
 
-pub trait DateSymbols {
-    fn get_symbol_for_month(
+pub trait DateSymbols<'data> {
+    fn get_symbols_for_month(
         &self,
         month: fields::Month,
         length: fields::FieldLength,
-        code: MonthCode,
-    ) -> Result<&str>;
+    ) -> Result<&months::SymbolsV1<'data>>;
     fn get_symbol_for_weekday(
         &self,
         weekday: fields::Weekday,
@@ -416,7 +424,7 @@ pub trait DateSymbols {
     fn get_symbol_for_era<'a>(&'a self, length: fields::FieldLength, era_code: &'a Era) -> &str;
 }
 
-impl<'data> DateSymbols for provider::calendar::DateSymbolsV1<'data> {
+impl<'data> DateSymbols<'data> for provider::calendar::DateSymbolsV1<'data> {
     fn get_symbol_for_weekday(
         &self,
         weekday: fields::Weekday,
@@ -465,12 +473,11 @@ impl<'data> DateSymbols for provider::calendar::DateSymbolsV1<'data> {
             .ok_or(DateTimeError::MissingWeekdaySymbol(idx))
     }
 
-    fn get_symbol_for_month(
+    fn get_symbols_for_month(
         &self,
         month: fields::Month,
         length: fields::FieldLength,
-        code: MonthCode,
-    ) -> Result<&str> {
+    ) -> Result<&months::SymbolsV1<'data>> {
         let widths = match month {
             fields::Month::Format => &self.months.format,
             fields::Month::StandAlone => {
@@ -481,14 +488,12 @@ impl<'data> DateSymbols for provider::calendar::DateSymbolsV1<'data> {
                         _ => widths.abbreviated.as_ref(),
                     };
                     if let Some(symbols) = symbols {
-                        return symbols
-                            .get(code)
-                            .ok_or(DateTimeError::MissingMonthSymbol(code));
+                        return Ok(symbols);
                     } else {
-                        return self.get_symbol_for_month(fields::Month::Format, length, code);
+                        return self.get_symbols_for_month(fields::Month::Format, length);
                     }
                 } else {
-                    return self.get_symbol_for_month(fields::Month::Format, length, code);
+                    return self.get_symbols_for_month(fields::Month::Format, length);
                 }
             }
         };
@@ -497,9 +502,7 @@ impl<'data> DateSymbols for provider::calendar::DateSymbolsV1<'data> {
             fields::FieldLength::Narrow => &widths.narrow,
             _ => &widths.abbreviated,
         };
-        symbols
-            .get(code)
-            .ok_or(DateTimeError::MissingMonthSymbol(code))
+        Ok(symbols)
     }
 
     /// Get the era symbol
