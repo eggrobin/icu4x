@@ -113,6 +113,8 @@ impl<'l, 's, Y: RuleBreakType<'l, 's> + ?Sized> Iterator for RuleBreakIterator<'
                 }
             }
 
+            let STATE_NAMES = ["Unknown", "CR", "LF", "Newline", "Extend", "ZWJ", "Regional_Indicator", "Format", "Katakana", "Hebrew_Letter", "ALetter", "Single_Quote", "Double_Quote", "MidNumLet", "MidLetter", "MidNum", "Numeric", "ExtendNumLet", "WSegSpace", "Extended_Pictographic", "SA", "ALetter_ZWJ", "WSegSpace_Extend", "WSegSpace_Format", "WSegSpace_ZWJ", "Unknown_ZWJ", "Extended_Pictographic_ZWJ", "ZWJ_Extend", "ZWJ_Format", "ALetter_MidLetter", "ALetter_Single_Quote", "Numeric_Single_Quote", "Numeric_MidNum", "Numeric_MidNumLet", "ALetter_MidNumLet", "Hebrew_Letter_MidLetter", "Hebrew_Letter_MidNumLet", "Hebrew_Letter_Single_Quote", "Hebrew_Letter_Double_Quote", "RI_RI", "RI_RI_ZWJ", "sot", "eot"];
+
             match self.get_break_state_from_table(left_prop, right_prop) {
                 BreakState::Keep => continue,
                 BreakState::Break | BreakState::NoMatch => {
@@ -120,6 +122,7 @@ impl<'l, 's, Y: RuleBreakType<'l, 's> + ?Sized> Iterator for RuleBreakIterator<'
                     return self.get_current_position();
                 }
                 BreakState::Index(mut index) | BreakState::Intermediate(mut index) => {
+                    println!("{}", STATE_NAMES[index as usize]);
                     // This isn't simple rule set. We need marker to restore iterator to previous position.
                     let mut previous_iter = self.iter.clone();
                     let mut previous_pos_data = self.current_pos_data;
@@ -142,6 +145,8 @@ impl<'l, 's, Y: RuleBreakType<'l, 's> + ?Sized> Iterator for RuleBreakIterator<'
                             // EOF
                             return Some(self.len);
                         };
+                        
+                        println!("{} ->", STATE_NAMES[prop as usize]);
 
                         let previous_break_state_is_cp_prop =
                             index <= self.data.last_codepoint_property;
@@ -149,6 +154,7 @@ impl<'l, 's, Y: RuleBreakType<'l, 's> + ?Sized> Iterator for RuleBreakIterator<'
                         match self.get_break_state_from_table(index, prop) {
                             BreakState::Keep => continue 'a,
                             BreakState::NoMatch => {
+                                println!(" NM");
                                 self.boundary_property = previous_left_prop;
                                 self.iter = previous_iter;
                                 self.current_pos_data = previous_pos_data;
@@ -157,6 +163,7 @@ impl<'l, 's, Y: RuleBreakType<'l, 's> + ?Sized> Iterator for RuleBreakIterator<'
                             BreakState::Break => return self.get_current_position(),
                             BreakState::Intermediate(i) => {
                                 index = i;
+                                println!("  {} (i)", STATE_NAMES[index as usize]);
                                 if previous_break_state_is_cp_prop {
                                     // Move marker
                                     previous_left_prop = index;
@@ -166,6 +173,7 @@ impl<'l, 's, Y: RuleBreakType<'l, 's> + ?Sized> Iterator for RuleBreakIterator<'
                             }
                             BreakState::Index(i) => {
                                 index = i;
+                                println!("  {}", STATE_NAMES[index as usize]);
                                 if previous_break_state_is_cp_prop {
                                     // Move marker
                                     previous_iter = self.iter.clone();
