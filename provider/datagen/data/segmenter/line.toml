@@ -1266,21 +1266,21 @@ left = "OP_SP"
 right = "SP"
 
 [[tables]]
-# LB15
-name = "QU_SP"
-left = "QU"
+# LB15a
+name = "Not_LB15_Pi"
+left = "AK"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "SP"
+left = "Not_LB15_Pi"
 right = "SP"
 
 [[tables]]
-# LB15
-name = "QU_SP"
-left = "QU_ZWJ"
-right = "SP"
-
-[[tables]]
-# LB15
-name = "QU_SP"
-left = "QU_SP"
+# LB15a
+name = "LB15_Pi_SP"
+left = "Pi"
 right = "SP"
 
 [[tables]]
@@ -1387,7 +1387,7 @@ break_state = true
 
 [[rules]]
 # LB3
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "QU_SP", "RI_RI" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
 right = [ "eot" ]
 break_state = true
 
@@ -1417,7 +1417,7 @@ break_state = false
 
 [[rules]]
 # LB6
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "QU_SP", "RI_RI" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
 right = [ "BK", "CR", "LF", "NL" ]
 break_state = false
 
@@ -1435,7 +1435,7 @@ break_state = false
 
 [[rules]]
 # LB7
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "QU_SP", "RI_RI" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
 right = [ "ZW" ]
 break_state = false
 
@@ -1465,7 +1465,7 @@ break_state = false
 
 [[rules]]
 # LB11
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "QU_SP", "RI_RI" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
 right = [ "WJ" ]
 break_state = false
 
@@ -1483,7 +1483,7 @@ break_state = false
 
 [[rules]]
 # LB12a
-left = [ "B2_SP", "CL_CP_SP", "QU_SP", "SP", "BA", "HY" ]
+left = [ "B2_SP", "CL_CP_SP", "SP", "BA", "HY" ]
 right = [ "GL" ]
 break_state = true
 
@@ -1501,7 +1501,7 @@ break_state = false
 
 [[rules]]
 # LB13
-left = [ "B2_SP", "CL_CP_SP", "QU_SP" ]
+left = [ "B2_SP", "CL_CP_SP" ]
 right = [ "CL", "CP", "EX", "IS", "SY" ]
 break_state = false
 
@@ -1512,9 +1512,9 @@ right = [ "Any" ]
 break_state = false
 
 [[rules]]
-# LB15
-left = [ "QU", "QU_SP" ]
-right = [ "OP_OP30", "OP_EA" ]
+# LB15a
+left = [ "LB15_Pi_SP" ]
+right = [ "Any" ]
 break_state = false
 
 [[rules]]
@@ -1537,7 +1537,7 @@ break_state = true
 
 [[rules]]
 # LB18
-left = [ "QU_SP", "B2_SP", "CL_CP_SP" ] # LB15
+left = [ "B2_SP", "CL_CP_SP" ]
 right = [ "Any" ]
 break_state = true
 
