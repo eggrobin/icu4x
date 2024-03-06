@@ -495,8 +495,26 @@ right = "ZWJ"
 
 [[tables]]
 # LB9
+name = "AK_ZWJ"
+left = "AK"
+right = "ZWJ"
+
+[[tables]]
+# LB9
 name = "AL_ZWJ"
 left = "AL"
+right = "ZWJ"
+
+[[tables]]
+# LB9
+name = "AP_ZWJ"
+left = "AP"
+right = "ZWJ"
+
+[[tables]]
+# LB9
+name = "AS_ZWJ"
+left = "AS"
 right = "ZWJ"
 
 [[tables]]
@@ -997,8 +1015,26 @@ right = "ZWJ"
 
 [[tables]]
 # LB9
+name = "AK_ZWJ"
+left = "AK_ZWJ"
+right = "ZWJ"
+
+[[tables]]
+# LB9
 name = "AL_ZWJ"
 left = "AL_ZWJ"
+right = "ZWJ"
+
+[[tables]]
+# LB9
+name = "AP_ZWJ"
+left = "AP_ZWJ"
+right = "ZWJ"
+
+[[tables]]
+# LB9
+name = "AS_ZWJ"
+left = "AS_ZWJ"
 right = "ZWJ"
 
 [[tables]]
@@ -1447,7 +1483,7 @@ break_state = true
 
 [[rules]]
 # LB8a
-left = [ "ZWJ", "AI_ZWJ", "AL_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "AL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ" ]
+left = [ "ZWJ", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ" ]
 right = [ "Any" ]
 break_state = false
 
@@ -1515,6 +1551,12 @@ break_state = false
 # LB15a
 left = [ "LB15_Pi_SP" ]
 right = [ "Any" ]
+break_state = false
+
+[[rules]]
+# LB15b (WRONG!)
+left = [ "Any" ]
+right = [ "Pf" ]
 break_state = false
 
 [[rules]]
@@ -1692,6 +1734,12 @@ break_state = false
 # (LB10 AL = CM)
 left = [ "AL", "HL", "AI", "XX", "SA", "CM" ]
 right = [ "AL", "HL", "AI", "XX", "SA" ]
+break_state = false
+
+[[rules]]
+# LB28a
+left = [ "AP" ]
+right = [ "AK", "AS" ]
 break_state = false
 
 [[rules]]
