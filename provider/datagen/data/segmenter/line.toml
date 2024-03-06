@@ -1329,6 +1329,18 @@ left = "HL_ZWJ"
 right = "BA"
 
 [[tables]]
+# LB28a
+name = "Aksara_VI"
+left = "AK"
+right = "VI"
+
+[[tables]]
+# LB28a
+name = "Aksara_VI"
+left = "AS"
+right = "VI"
+
+[[tables]]
 # LB30a
 name = "RI_RI"
 left = "RI"
@@ -1654,6 +1666,24 @@ break_state = false
 left = [ "AL", "HL", "AI", "XX", "SA", "CM" ]
 right = [ "AL", "HL", "AI", "XX", "SA" ]
 break_state = false
+
+[[rules]]
+# LB28a
+left = [ "AK", "AS" ]
+right = [ "VF" ]
+break_state = false
+
+[[rules]]
+# LB28a
+left = [ "Aksara_VI" ]
+right = [ "AK" ]
+break_state = false
+
+[[rules]]
+# LB28a
+left = [ "Aksara_VI" ]
+right = [ "Any" ]
+break_state = true
 
 [[rules]]
 # LB29
