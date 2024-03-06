@@ -13,7 +13,16 @@ segmenter_type = "line"
 name = "AI"
 
 [[tables]]
+name = "AK"
+
+[[tables]]
 name = "AL"
+
+[[tables]]
+name = "AP"
+
+[[tables]]
+name = "AS"
 
 [[tables]]
 name = "B2"
@@ -143,6 +152,12 @@ name = "SP"
 name = "SY"
 
 [[tables]]
+name = "VI"
+
+[[tables]]
+name = "VF"
+
+[[tables]]
 name = "WJ"
 
 [[tables]]
@@ -168,8 +183,26 @@ right = "CM"
 
 [[tables]]
 # LB9
+name = "AK"
+left = "AK"
+right = "CM"
+
+[[tables]]
+# LB9
 name = "AL"
 left = "AL"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "AP"
+left = "AP"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "AS"
+left = "AS"
 right = "CM"
 
 [[tables]]
@@ -380,6 +413,18 @@ right = "CM"
 # LB9
 name = "SY"
 left = "SY"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "VF"
+left = "VF"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "VI"
+left = "VI"
 right = "CM"
 
 [[tables]]
