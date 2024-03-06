@@ -337,9 +337,20 @@ fn generate_rule_break_data(
                         || p.name == "ID_CN"
                         || p.name == "PO_EAW"
                         || p.name == "PR_EAW"
+                        || p.name == "Pi"
+                        || p.name == "Pf"
                     {
                         for i in 0..(CODEPOINT_TABLE_LEN as u32) {
                             match lb.get32(i) {
+                                LineBreak::Quotation => {
+                                    if (p.name == "Pi"
+                                        && gc.get32(i) == GeneralCategory::InitialPunctuation)
+                                        || (p.name == "Pf"
+                                        && gc.get32(i) == GeneralCategory::FinalPunctuation)
+                                    {
+                                        properties_map[i as usize] = property_index;
+                                    }
+                                }
                                 LineBreak::OpenPunctuation => {
                                     if (p.name == "OP_OP30"
                                         && (eaw.get32(i) != EastAsianWidth::Fullwidth
@@ -392,6 +403,9 @@ fn generate_rule_break_data(
                                 _ => {}
                             }
                         }
+                        continue;
+                    } else if p.name == "DOTTED_CIRCLE" {
+                        properties_map['◌' as usize] = property_index;
                         continue;
                     }
 

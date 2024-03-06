@@ -137,6 +137,12 @@ name = "PR_EAW"
 name = "QU"
 
 [[tables]]
+name = "Pi"
+
+[[tables]]
+name = "Pf"
+
+[[tables]]
 name = "RI"
 
 [[tables]]
@@ -168,6 +174,9 @@ name = "ZW"
 
 [[tables]]
 name = "ZWJ"
+
+[[tables]]
+name = "DOTTED_CIRCLE"
 
 [[tables]]
 # LB8
@@ -399,6 +408,18 @@ right = "CM"
 
 [[tables]]
 # LB9
+name = "Pi"
+left = "Pi"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "Pf"
+left = "Pf"
+right = "CM"
+
+[[tables]]
+# LB9
 name = "RI"
 left = "RI"
 right = "CM"
@@ -437,6 +458,12 @@ right = "CM"
 # LB9
 name = "XX"
 left = "XX"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "DOTTED_CIRCLE"
+left = "DOTTED_CIRCLE"
 right = "CM"
 
 [[tables]]
@@ -1517,12 +1544,12 @@ break_state = true
 [[rules]]
 # LB19
 left = [ "Any", "RI_RI" ]
-right = [ "QU" ]
+right = [ "QU", "Pi", "Pf" ]
 break_state = false
 
 [[rules]]
 # LB19
-left = [ "QU" ]
+left = [ "QU", "Pi", "Pf" ]
 right = [ "Any" ]
 break_state = false
 
