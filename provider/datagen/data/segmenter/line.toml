@@ -478,6 +478,12 @@ name = "HL_HY"
 left = "HL_HY"
 right = "CM"
 
+[[tables]]
+# LB 9
+name = "Aksara_VI"
+left = "Aksara_VI"
+right = "CM"
+
 # X ZWJ is treated as X, but only after the rule ZWJ × has been applied,
 # so we cannot just do the same thing we do for CM.
 # Instead we split each state X into X and X_ZWJ, and forbid a break after
@@ -1327,12 +1333,6 @@ right = "Pi"
 
 [[tables]]
 # LB15a
-name = "SP"
-left = "Not_LB15_Pi"
-right = "SP"
-
-[[tables]]
-# LB15a
 name = "LB15_Pi_SP"
 left = "Pi"
 right = "SP"
@@ -1436,8 +1436,38 @@ right = "VI"
 [[tables]]
 # LB28a
 name = "Aksara_VI"
+left = "DOTTED_CIRCLE"
+right = "VI"
+
+[[tables]]
+# LB28a
+name = "Aksara_VI"
 left = "AS"
 right = "VI"
+
+[[tables]]
+# LB28a
+name = "Double_Aksara"
+left = "AK"
+right = "AK"
+
+[[tables]]
+# LB28a
+name = "Double_Aksara"
+left = "AS"
+right = "AK"
+
+[[tables]]
+# LB28a
+name = "Double_Aksara"
+left = "AK"
+right = "AS"
+
+[[tables]]
+# LB28a
+name = "Double_Aksara"
+left = "AS"
+right = "AS"
 
 [[tables]]
 # LB30a
@@ -1459,7 +1489,7 @@ break_state = true
 
 [[rules]]
 # LB3
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI", "Not_LB15_Pi" ]
 right = [ "eot" ]
 break_state = true
 
@@ -1501,7 +1531,7 @@ break_state = false
 
 [[rules]]
 # LB7
-left = [ "HL_HY", "RI_RI" ]
+left = [ "HL_HY", "RI_RI", "Not_LB15_Pi" ]
 right = [ "SP" ]
 break_state = false
 
@@ -1549,7 +1579,7 @@ break_state = false
 
 [[rules]]
 # LB12a
-left = [ "HL_HY", "OP_SP", "RI_RI" ]
+left = [ "HL_HY", "OP_SP", "RI_RI", "Not_LB15_Pi" ]
 right = [ "GL" ]
 break_state = false
 
@@ -1768,8 +1798,8 @@ break_state = false
 # LB28
 # (LB1 AL = AI, AL, SA or XX)
 # (LB10 AL = CM)
-left = [ "AL", "HL", "AI", "XX", "SA", "CM" ]
-right = [ "AL", "HL", "AI", "XX", "SA" ]
+left = [ "AL", "DOTTED_CIRCLE", "HL", "AI", "XX", "SA", "CM" ]
+right = [ "AL", "DOTTED_CIRCLE", "HL", "AI", "XX", "SA" ]
 break_state = false
 
 [[rules]]
@@ -1787,7 +1817,7 @@ break_state = false
 [[rules]]
 # LB28a
 left = [ "Aksara_VI" ]
-right = [ "AK" ]
+right = [ "AK", "DOTTED_CIRCLE" ]
 break_state = false
 
 [[rules]]
@@ -1795,6 +1825,12 @@ break_state = false
 left = [ "Aksara_VI" ]
 right = [ "Any" ]
 break_state = true
+
+[[rules]]
+# LB28a
+left = [ "Double_Aksara" ]
+right = [ "VF" ]
+break_state = false
 
 [[rules]]
 # LB29
