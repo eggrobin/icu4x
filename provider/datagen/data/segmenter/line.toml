@@ -1321,13 +1321,13 @@ right = "SP"
 
 [[tables]]
 # LB15a
-name = "Not_LB15_Pi"
+name = "QU"
 left = "AK"
 right = "Pi"
 
 [[tables]]
 # LB15a
-name = "Not_LB15_Pi"
+name = "QU"
 left = "AL"
 right = "Pi"
 
@@ -1489,7 +1489,7 @@ break_state = true
 
 [[rules]]
 # LB3
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI", "Not_LB15_Pi" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
 right = [ "eot" ]
 break_state = true
 
@@ -1531,7 +1531,7 @@ break_state = false
 
 [[rules]]
 # LB7
-left = [ "HL_HY", "RI_RI", "Not_LB15_Pi" ]
+left = [ "HL_HY", "RI_RI" ]
 right = [ "SP" ]
 break_state = false
 
@@ -1579,7 +1579,7 @@ break_state = false
 
 [[rules]]
 # LB12a
-left = [ "HL_HY", "OP_SP", "RI_RI", "Not_LB15_Pi" ]
+left = [ "HL_HY", "OP_SP", "RI_RI" ]
 right = [ "GL" ]
 break_state = false
 
@@ -1597,7 +1597,7 @@ break_state = false
 
 [[rules]]
 # LB13
-left = [ "Any", "RI_RI" ]
+left = [ "Any", "RI_RI", "Aksara_VI" ]
 right = [ "CL", "CP", "EX", "IS", "SY" ]
 break_state = false
 
@@ -1620,7 +1620,7 @@ right = [ "Any" ]
 break_state = false
 
 [[rules]]
-# LB15b (WRONG!)
+# LB15b
 left = [ "SP_Pf" ]
 right = [ "SP", "GL", "WJ", "CL", "QU", "CP", "EX", "IS", "SY", "BK", "CR", "LF", "NL", "ZW", "eot" ]
 break_state = false
