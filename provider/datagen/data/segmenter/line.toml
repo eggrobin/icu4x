@@ -1343,6 +1343,8 @@ name = "OP_SP"
 left = "OP_SP"
 right = "SP"
 
+# In contexts that do not match LB 15a, treat Pi as QU.
+
 [[tables]]
 # LB15a
 name = "QU"
@@ -1357,7 +1359,21 @@ right = "Pi"
 
 [[tables]]
 # LB15a
-name = "LB15_Pi_SP"
+name = "QU"
+left = "CB"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "CP"
+right = "Pi"
+
+# Any remaining Pi is in the context of LB15a, so transition to LB15a_Pi_SP if there is a space.
+
+[[tables]]
+# LB15a
+name = "LB15a_Pi_SP"
 left = "Pi"
 right = "SP"
 
@@ -1543,7 +1559,7 @@ break_state = false
 
 [[rules]]
 # LB6
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI", "Aksara_VI" ]
 right = [ "BK", "CR", "LF", "NL" ]
 break_state = false
 
@@ -1555,13 +1571,13 @@ break_state = false
 
 [[rules]]
 # LB7
-left = [ "HL_HY", "RI_RI" ]
+left = [ "HL_HY", "RI_RI", "Aksara_VI" ]
 right = [ "SP" ]
 break_state = false
 
 [[rules]]
 # LB7
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI", "Aksara_VI" ]
 right = [ "ZW" ]
 break_state = false
 
@@ -1591,7 +1607,7 @@ break_state = false
 
 [[rules]]
 # LB11
-left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI" ]
+left = [ "B2_SP", "CL_CP_SP", "HL_HY", "OP_SP", "RI_RI", "Aksara_VI" ]
 right = [ "WJ" ]
 break_state = false
 
@@ -1639,7 +1655,7 @@ break_state = false
 
 [[rules]]
 # LB15a
-left = [ "LB15_Pi_SP" ]
+left = [ "LB15a_Pi_SP" ]
 right = [ "Any" ]
 break_state = false
 
@@ -1699,7 +1715,7 @@ break_state = true
 
 [[rules]]
 # LB21
-left = [ "Any", "RI_RI" ]
+left = [ "Any", "RI_RI", "Aksara_VI" ]
 right = [ "BA", "HY", "CJ", "NS" ] # NS = CJ or NS
 break_state = false
 
@@ -1723,7 +1739,7 @@ break_state = false
 
 [[rules]]
 # LB22
-left = [ "Any", "RI_RI" ]
+left = [ "Any", "RI_RI", "Aksara_VI" ]
 right = [ "IN" ]
 break_state = false
 
