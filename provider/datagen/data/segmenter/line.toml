@@ -1338,6 +1338,24 @@ left = "Pi"
 right = "SP"
 
 [[tables]]
+# LB15b
+name = "SP_Pf"
+left = "SP"
+right = "Pf"
+
+[[tables]]
+# LB15b
+name = "SP_Pf"
+left = "B2_SP"
+right = "Pf"
+
+[[tables]]
+# LB15b
+name = "SP_Pf"
+left = "CL_CP_SP"
+right = "Pf"
+
+[[tables]]
 # LB16
 name = "CL_CP_SP"
 left = "CL"
@@ -1573,8 +1591,8 @@ break_state = false
 
 [[rules]]
 # LB15b (WRONG!)
-left = [ "Any", "B2_SP", "CL_CP_SP" ]
-right = [ "Pf" ]
+left = [ "SP_Pf" ]
+right = [ "SP", "GL", "WJ", "CL", "QU", "CP", "EX", "IS", "SY", "BK", "CR", "LF", "NL", "ZW", "eot" ]
 break_state = false
 
 [[rules]]
