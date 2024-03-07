@@ -736,6 +736,18 @@ right = "ZWJ"
 
 [[tables]]
 # LB9
+name = "VI_ZWJ"
+left = "VI"
+right = "ZWJ"
+
+[[tables]]
+# LB9
+name = "VF_ZWJ"
+left = "VF"
+right = "ZWJ"
+
+[[tables]]
+# LB9
 name = "WJ_ZWJ"
 left = "WJ"
 right = "ZWJ"
@@ -1309,6 +1321,12 @@ right = "Pi"
 
 [[tables]]
 # LB15a
+name = "Not_LB15_Pi"
+left = "AL"
+right = "Pi"
+
+[[tables]]
+# LB15a
 name = "SP"
 left = "Not_LB15_Pi"
 right = "SP"
@@ -1483,7 +1501,7 @@ break_state = true
 
 [[rules]]
 # LB8a
-left = [ "ZWJ", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ" ]
+left = [ "ZWJ", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "VI_ZWJ", "VF_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ" ]
 right = [ "Any" ]
 break_state = false
 
@@ -1555,7 +1573,7 @@ break_state = false
 
 [[rules]]
 # LB15b (WRONG!)
-left = [ "Any" ]
+left = [ "Any", "B2_SP", "CL_CP_SP" ]
 right = [ "Pf" ]
 break_state = false
 
