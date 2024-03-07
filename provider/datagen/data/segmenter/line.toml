@@ -787,8 +787,20 @@ right = "CM"
 
 [[tables]]
 # LB9
+name = "AK"
+left = "AK_ZWJ"
+right = "CM"
+
+[[tables]]
+# LB9
 name = "AL"
 left = "AL_ZWJ"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "AP"
+left = "AP_ZWJ"
 right = "CM"
 
 [[tables]]
@@ -999,6 +1011,18 @@ right = "CM"
 # LB9
 name = "SY"
 left = "SY_ZWJ"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "VI"
+left = "VI_ZWJ"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "VF"
+left = "VF_ZWJ"
 right = "CM"
 
 [[tables]]
