@@ -1369,6 +1369,12 @@ name = "QU"
 left = "CP"
 right = "Pi"
 
+[[tables]]
+# LB15a
+name = "QU"
+left = "NU"
+right = "Pi"
+
 # Any remaining Pi is in the context of LB15a, so transition to LB15a_Pi_SP if there is a space.
 
 [[tables]]
@@ -1662,7 +1668,7 @@ break_state = false
 [[rules]]
 # LB15b
 left = [ "SP_Pf" ]
-right = [ "SP", "GL", "WJ", "CL", "QU", "CP", "EX", "IS", "SY", "BK", "CR", "LF", "NL", "ZW", "eot" ]
+right = [ "SP", "GL", "WJ", "CL", "QU", "Pi", "Pf", "CP", "EX", "IS", "SY", "BK", "CR", "LF", "NL", "ZW", "eot" ]
 break_state = false
 
 [[rules]]
