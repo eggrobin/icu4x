@@ -776,6 +776,12 @@ name = "HL_HY_ZWJ"
 left = "HL_HY"
 right = "ZWJ"
 
+[[tables]]
+# LB9
+name = "Aksara_VI_ZWJ"
+left = "Aksara_VI"
+right = "ZWJ"
+
 # X ZWJ CM brings us back to state X,
 # as the ZWJ does not act through CMs, LB8a being before LB9.
 
@@ -1384,7 +1390,37 @@ right = "Pi"
 [[tables]]
 # LB15a
 name = "QU"
+left = "JL"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "JT"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
 left = "NU"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "VI"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "VF"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "Aksara_VI"
 right = "Pi"
 
 # Any remaining Pi is in the context of LB15a, so transition to LB15a_Pi_SP if there is a space.
@@ -1637,7 +1673,7 @@ break_state = false
 
 [[rules]]
 # LB12a
-left = [ "HL_HY", "OP_SP", "RI_RI" ]
+left = [ "HL_HY", "OP_SP", "RI_RI", "Aksara_VI" ]
 right = [ "GL" ]
 break_state = false
 

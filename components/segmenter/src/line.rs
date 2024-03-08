@@ -962,6 +962,9 @@ impl<'l, 's, Y: LineBreakType<'l, 's>> Iterator for LineBreakIterator<'l, 's, Y>
                 BreakState::Keep => continue,
             };
 
+            let states = ["Unknown", "AI", "AK", "AL", "AP", "AS", "B2", "BA", "BB", "BK", "CB", "CJ", "CL", "CM", "CP", "CR", "EB", "EM", "EX", "GL", "H2", "H3", "HL", "HY", "ID", "ID_CN", "IN", "IS", "JL", "JT", "JV", "LF", "NL", "NS", "NU", "OP_EA", "OP_OP30", "PO", "PO_EAW", "PR", "PR_EAW", "QU", "Pi", "Pf", "RI", "SA", "SG", "SP", "SY", "VI", "VF", "WJ", "XX", "ZW", "ZWJ", "DOTTED_CIRCLE", "RI_RI", "HL_HY", "Aksara_VI", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "VI_ZWJ", "VF_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ", "OP_SP", "LB15a_Pi_SP", "SP_Pf", "CL_CP_SP", "B2_SP", "Double_Aksara", "sot", "eot"];
+            println!("{:?}", states[index as usize]);
+
             let mut previous_iter = self.iter.clone();
             let mut previous_pos_data = self.current_pos_data;
 

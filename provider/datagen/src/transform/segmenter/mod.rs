@@ -441,6 +441,7 @@ fn generate_rule_break_data(
     // sot and eot
     properties_names.push("sot".to_string());
     properties_names.push("eot".to_string());
+    println!("{:?}", properties_names);
 
     let rule_size = properties_names.len() * properties_names.len();
     let mut break_state_table = vec![None; rule_size];
