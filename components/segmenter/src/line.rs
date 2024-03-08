@@ -20,97 +20,113 @@ const UNKNOWN: u8 = 0;
 #[allow(dead_code)]
 const AI: u8 = 1;
 #[allow(dead_code)]
-const AL: u8 = 2;
+const AK: u8 = 2;
 #[allow(dead_code)]
-const B2: u8 = 3;
+const AL: u8 = 3;
 #[allow(dead_code)]
-const BA: u8 = 4;
+const AP: u8 = 4;
 #[allow(dead_code)]
-const BB: u8 = 5;
+const AS: u8 = 5;
 #[allow(dead_code)]
-const BK: u8 = 6;
+const B2: u8 = 6;
 #[allow(dead_code)]
-const CB: u8 = 7;
+const BA: u8 = 7;
 #[allow(dead_code)]
-const CJ: u8 = 8;
+const BB: u8 = 8;
 #[allow(dead_code)]
-const CL: u8 = 9;
+const BK: u8 = 9;
 #[allow(dead_code)]
-const CM: u8 = 10;
+const CB: u8 = 10;
 #[allow(dead_code)]
-const CP: u8 = 11;
+const CJ: u8 = 11;
 #[allow(dead_code)]
-const CR: u8 = 12;
+const CL: u8 = 12;
 #[allow(dead_code)]
-const EB: u8 = 13;
+const CM: u8 = 13;
 #[allow(dead_code)]
-const EM: u8 = 14;
+const CP: u8 = 14;
 #[allow(dead_code)]
-const EX: u8 = 15;
+const CR: u8 = 15;
 #[allow(dead_code)]
-const GL: u8 = 16;
+const EB: u8 = 16;
 #[allow(dead_code)]
-const H2: u8 = 17;
+const EM: u8 = 17;
 #[allow(dead_code)]
-const H3: u8 = 18;
+const EX: u8 = 18;
 #[allow(dead_code)]
-const HL: u8 = 19;
+const GL: u8 = 19;
 #[allow(dead_code)]
-const HY: u8 = 20;
+const H2: u8 = 20;
 #[allow(dead_code)]
-const ID: u8 = 21;
+const H3: u8 = 21;
 #[allow(dead_code)]
-const ID_CN: u8 = 22;
+const HL: u8 = 22;
 #[allow(dead_code)]
-const IN: u8 = 23;
+const HY: u8 = 23;
 #[allow(dead_code)]
-const IS: u8 = 24;
+const ID: u8 = 24;
 #[allow(dead_code)]
-const JL: u8 = 25;
+const ID_CN: u8 = 25;
 #[allow(dead_code)]
-const JT: u8 = 26;
+const IN: u8 = 26;
 #[allow(dead_code)]
-const JV: u8 = 27;
+const IS: u8 = 27;
 #[allow(dead_code)]
-const LF: u8 = 28;
+const JL: u8 = 28;
 #[allow(dead_code)]
-const NL: u8 = 29;
+const JT: u8 = 29;
 #[allow(dead_code)]
-const NS: u8 = 30;
+const JV: u8 = 30;
 #[allow(dead_code)]
-const NU: u8 = 31;
+const LF: u8 = 31;
 #[allow(dead_code)]
-const OP_EA: u8 = 32;
+const NL: u8 = 32;
 #[allow(dead_code)]
-const OP_OP30: u8 = 33;
+const NS: u8 = 33;
 #[allow(dead_code)]
-const PO: u8 = 34;
+const NU: u8 = 34;
 #[allow(dead_code)]
-const PO_EAW: u8 = 35;
+const OP_EA: u8 = 35;
 #[allow(dead_code)]
-const PR: u8 = 36;
+const OP_OP30: u8 = 36;
 #[allow(dead_code)]
-const PR_EAW: u8 = 37;
+const PO: u8 = 37;
 #[allow(dead_code)]
-const QU: u8 = 38;
+const PO_EAW: u8 = 38;
 #[allow(dead_code)]
-const RI: u8 = 39;
+const PR: u8 = 39;
 #[allow(dead_code)]
-const SA: u8 = 40;
+const PR_EAW: u8 = 40;
 #[allow(dead_code)]
-const SG: u8 = 41;
+const QU: u8 = 41;
 #[allow(dead_code)]
-const SP: u8 = 42;
+const PI: u8 = 42;
 #[allow(dead_code)]
-const SY: u8 = 43;
+const PF: u8 = 43;
 #[allow(dead_code)]
-const WJ: u8 = 44;
+const RI: u8 = 44;
 #[allow(dead_code)]
-const XX: u8 = 45;
+const SA: u8 = 45;
 #[allow(dead_code)]
-const ZW: u8 = 46;
+const SG: u8 = 46;
 #[allow(dead_code)]
-const ZWJ: u8 = 47;
+const SP: u8 = 47;
+#[allow(dead_code)]
+const SY: u8 = 48;
+#[allow(dead_code)]
+const VI: u8 = 49;
+#[allow(dead_code)]
+const VF: u8 = 50;
+#[allow(dead_code)]
+const WJ: u8 = 51;
+#[allow(dead_code)]
+const XX: u8 = 52;
+#[allow(dead_code)]
+const ZW: u8 = 53;
+#[allow(dead_code)]
+const ZWJ: u8 = 54;
+#[allow(dead_code)]
+const DOTTED_CIRCLE: u8 = 55;
 
 /// An enum specifies the strictness of line-breaking rules. It can be passed as
 /// an argument when creating a line segmenter.
@@ -897,6 +913,8 @@ impl<'l, 's, Y: LineBreakType<'l, 's>> Iterator for LineBreakIterator<'l, 's, Y>
                 return Some(self.len);
             };
             let right_prop = self.get_linebreak_property(right_codepoint);
+            let states = ["Unknown", "AI", "AK", "AL", "AP", "AS", "B2", "BA", "BB", "BK", "CB", "CJ", "CL", "CM", "CP", "CR", "EB", "EM", "EX", "GL", "H2", "H3", "HL", "HY", "ID", "ID_CN", "IN", "IS", "JL", "JT", "JV", "LF", "NL", "NS", "NU", "OP_EA", "OP_OP30", "PO", "PO_EAW", "PR", "PR_EAW", "QU", "Pi", "Pf", "RI", "SA", "SG", "SP", "SY", "VI", "VF", "WJ", "XX", "ZW", "ZWJ", "DOTTED_CIRCLE", "RI_RI", "HL_HY", "Aksara_VI", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "VI_ZWJ", "VF_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ", "Aksara_VI_ZWJ", "OP_SP", "LB15a_Pi_SP", "SP_Pf", "CL_CP_SP", "B2_SP", "Double_Aksara", "sot", "eot"];
+            println!("{:?}-{:?}?", states[left_prop as usize], states[right_prop as usize]);
 
             // CSS word-break property handling
             match (self.options.word_option, left_prop, right_prop) {
@@ -953,16 +971,16 @@ impl<'l, 's, Y: LineBreakType<'l, 's>> Iterator for LineBreakIterator<'l, 's, Y>
             }
 
             // If break_state is equals or grater than 0, it is alias of property.
+            println!("{:?}-{:?}", states[left_prop as usize], states[right_prop as usize]);
             let mut index = match self.data.get_break_state_from_table(left_prop, right_prop) {
                 BreakState::Index(index) => index,
                 // Line break uses more that 64 states, so they spill over into the intermediate range,
                 // and we cannot change that at the moment
                 BreakState::Intermediate(index) => index + 64,
-                BreakState::Break | BreakState::NoMatch => return self.get_current_position(),
-                BreakState::Keep => continue,
+                BreakState::Break | BreakState::NoMatch => { println!("No match"); return self.get_current_position()},
+                BreakState::Keep =>  { println!("Keep"); continue},
             };
 
-            let states = ["Unknown", "AI", "AK", "AL", "AP", "AS", "B2", "BA", "BB", "BK", "CB", "CJ", "CL", "CM", "CP", "CR", "EB", "EM", "EX", "GL", "H2", "H3", "HL", "HY", "ID", "ID_CN", "IN", "IS", "JL", "JT", "JV", "LF", "NL", "NS", "NU", "OP_EA", "OP_OP30", "PO", "PO_EAW", "PR", "PR_EAW", "QU", "Pi", "Pf", "RI", "SA", "SG", "SP", "SY", "VI", "VF", "WJ", "XX", "ZW", "ZWJ", "DOTTED_CIRCLE", "RI_RI", "HL_HY", "Aksara_VI", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "VI_ZWJ", "VF_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ", "OP_SP", "LB15a_Pi_SP", "SP_Pf", "CL_CP_SP", "B2_SP", "Double_Aksara", "sot", "eot"];
             println!("{:?}", states[index as usize]);
 
             let mut previous_iter = self.iter.clone();
@@ -985,6 +1003,7 @@ impl<'l, 's, Y: LineBreakType<'l, 's>> Iterator for LineBreakIterator<'l, 's, Y>
                     return Some(self.len);
                 };
 
+                println!("  {:?}-{:?}", states[left_prop as usize], states[prop as usize]);
                 match self.data.get_break_state_from_table(index, prop) {
                     BreakState::Keep => continue 'a,
                     BreakState::NoMatch => {
