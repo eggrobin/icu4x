@@ -1360,6 +1360,12 @@ right = "Pi"
 [[tables]]
 # LB15a
 name = "QU"
+left = "AP"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
 left = "B2"
 right = "Pi"
 
