@@ -782,6 +782,12 @@ name = "Aksara_VI_ZWJ"
 left = "Aksara_VI"
 right = "ZWJ"
 
+[[tables]]
+# LB9
+name = "Double_Aksara_ZWJ"
+left = "Double_Aksara"
+right = "ZWJ"
+
 # X ZWJ CM brings us back to state X,
 # as the ZWJ does not act through CMs, LB8a being before LB9.
 
@@ -807,6 +813,12 @@ right = "CM"
 # LB9
 name = "AP"
 left = "AP_ZWJ"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "AS"
+left = "AS_ZWJ"
 right = "CM"
 
 [[tables]]
@@ -1059,6 +1071,12 @@ right = "CM"
 # LB9
 name = "Aksara_VI"
 left = "Aksara_VI_ZWJ"
+right = "CM"
+
+[[tables]]
+# LB9
+name = "Double_Aksara"
+left = "Double_Aksara_ZWJ"
 right = "CM"
 
 [[tables]]
@@ -1378,7 +1396,25 @@ right = "Pi"
 [[tables]]
 # LB15a
 name = "QU"
+left = "AS"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
 left = "B2"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "BA"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "BB"
 right = "Pi"
 
 [[tables]]
@@ -1390,7 +1426,79 @@ right = "Pi"
 [[tables]]
 # LB15a
 name = "QU"
+left = "CM"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "CJ"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
 left = "CP"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "EB"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "EM"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "EX"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "H2"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "H3"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "HL"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "HY"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "ID"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "IN"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "IS"
 right = "Pi"
 
 [[tables]]
@@ -1408,7 +1516,37 @@ right = "Pi"
 [[tables]]
 # LB15a
 name = "QU"
+left = "JV"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
 left = "NU"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "NS"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "PO"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "PR"
+right = "Pi"
+
+[[tables]]
+# LB15a
+name = "QU"
+left = "RI"
 right = "Pi"
 
 [[tables]]
@@ -1649,7 +1787,7 @@ break_state = true
 
 [[rules]]
 # LB8a
-left = [ "ZWJ", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "VI_ZWJ", "VF_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ", "Aksara_VI_ZWJ" ]
+left = [ "ZWJ", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "VI_ZWJ", "VF_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ", "Aksara_VI_ZWJ", "Double_Aksara_ZWJ" ]
 right = [ "Any" ]
 break_state = false
 
@@ -1751,7 +1889,7 @@ break_state = true
 
 [[rules]]
 # LB19
-left = [ "Any", "RI_RI" ]
+left = [ "Any", "RI_RI", "Aksara_VI" ]
 right = [ "QU", "Pi", "Pf" ]
 break_state = false
 

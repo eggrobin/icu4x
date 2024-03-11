@@ -913,9 +913,8 @@ impl<'l, 's, Y: LineBreakType<'l, 's>> Iterator for LineBreakIterator<'l, 's, Y>
                 return Some(self.len);
             };
             let right_prop = self.get_linebreak_property(right_codepoint);
-            let states = ["Unknown", "AI", "AK", "AL", "AP", "AS", "B2", "BA", "BB", "BK", "CB", "CJ", "CL", "CM", "CP", "CR", "EB", "EM", "EX", "GL", "H2", "H3", "HL", "HY", "ID", "ID_CN", "IN", "IS", "JL", "JT", "JV", "LF", "NL", "NS", "NU", "OP_EA", "OP_OP30", "PO", "PO_EAW", "PR", "PR_EAW", "QU", "Pi", "Pf", "RI", "SA", "SG", "SP", "SY", "VI", "VF", "WJ", "XX", "ZW", "ZWJ", "DOTTED_CIRCLE", "RI_RI", "HL_HY", "Aksara_VI", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "VI_ZWJ", "VF_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ", "Aksara_VI_ZWJ", "OP_SP", "LB15a_Pi_SP", "SP_Pf", "CL_CP_SP", "B2_SP", "Double_Aksara", "sot", "eot"];
-            println!("{:?}-{:?}?", states[left_prop as usize], states[right_prop as usize]);
-
+            let states = ["Unknown", "AI", "AK", "AL", "AP", "AS", "B2", "BA", "BB", "BK", "CB", "CJ", "CL", "CM", "CP", "CR", "EB", "EM", "EX", "GL", "H2", "H3", "HL", "HY", "ID", "ID_CN", "IN", "IS", "JL", "JT", "JV", "LF", "NL", "NS", "NU", "OP_EA", "OP_OP30", "PO", "PO_EAW", "PR", "PR_EAW", "QU", "Pi", "Pf", "RI", "SA", "SG", "SP", "SY", "VI", "VF", "WJ", "XX", "ZW", "ZWJ", "DOTTED_CIRCLE", "RI_RI", "HL_HY", "Aksara_VI", "AI_ZWJ", "AK_ZWJ", "AL_ZWJ", "AP_ZWJ", "AS_ZWJ", "B2_ZWJ", "BA_ZWJ", "BB_ZWJ", "CB_ZWJ", "CJ_ZWJ", "CL_ZWJ", "CP_ZWJ", "EB_ZWJ", "EM_ZWJ", "EX_ZWJ", "GL_ZWJ", "H2_ZWJ", "H3_ZWJ", "HL_ZWJ", "HY_ZWJ", "ID_ZWJ", "ID_CN_ZWJ", "IN_ZWJ", "IS_ZWJ", "JL_ZWJ", "JT_ZWJ", "JV_ZWJ", "NS_ZWJ", "NU_ZWJ", "OP_EA_ZWJ", "OP_OP30_ZWJ", "PO_ZWJ", "PO_EAW_ZWJ", "QU_ZWJ", "RI_ZWJ", "PR_ZWJ", "PR_EAW_ZWJ", "SA_ZWJ", "SY_ZWJ", "VI_ZWJ", "VF_ZWJ", "WJ_ZWJ", "XX_ZWJ", "RI_RI_ZWJ", "HL_HY_ZWJ", "Aksara_VI_ZWJ", "Double_Aksara_ZWJ", "Double_Aksara", "OP_SP", "LB15a_Pi_SP", "SP_Pf", "CL_CP_SP", "B2_SP", "sot", "eot"];
+            println!("{}-{}", states[left_prop as usize], states[right_prop as usize]);
             // CSS word-break property handling
             match (self.options.word_option, left_prop, right_prop) {
                 (LineBreakWordOption::BreakAll, AL | NU | SA, _) => {
@@ -971,14 +970,13 @@ impl<'l, 's, Y: LineBreakType<'l, 's>> Iterator for LineBreakIterator<'l, 's, Y>
             }
 
             // If break_state is equals or grater than 0, it is alias of property.
-            println!("{:?}-{:?}", states[left_prop as usize], states[right_prop as usize]);
             let mut index = match self.data.get_break_state_from_table(left_prop, right_prop) {
                 BreakState::Index(index) => index,
                 // Line break uses more that 64 states, so they spill over into the intermediate range,
                 // and we cannot change that at the moment
                 BreakState::Intermediate(index) => index + 64,
-                BreakState::Break | BreakState::NoMatch => { println!("No match"); return self.get_current_position()},
-                BreakState::Keep =>  { println!("Keep"); continue},
+                BreakState::Break | BreakState::NoMatch => return self.get_current_position(),
+                BreakState::Keep => continue,
             };
 
             println!("{:?}", states[index as usize]);
@@ -1002,16 +1000,18 @@ impl<'l, 's, Y: LineBreakType<'l, 's>> Iterator for LineBreakIterator<'l, 's, Y>
                     // EOF
                     return Some(self.len);
                 };
+                println!("  {}-{}", states[index as usize], states[prop as usize]);
 
-                println!("  {:?}-{:?}", states[left_prop as usize], states[prop as usize]);
                 match self.data.get_break_state_from_table(index, prop) {
-                    BreakState::Keep => continue 'a,
+                    BreakState::Keep =>
+                    { println!("  keep"); continue 'a },
                     BreakState::NoMatch => {
+                        println!("  no match");
                         self.iter = previous_iter;
                         self.current_pos_data = previous_pos_data;
                         return self.get_current_position();
                     }
-                    BreakState::Break => return self.get_current_position(),
+                    BreakState::Break => { println!("  break"); return self.get_current_position() },
                     BreakState::Index(i) => {
                         index = i;
                         previous_iter = self.iter.clone();
